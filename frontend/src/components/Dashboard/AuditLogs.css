@@ -3,6 +3,13 @@
   max-width: 1200px;
 }
 
+.audit-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 24px;
+}
+
 .audit-header h2 {
   font-size: 24px;
   margin-bottom: 4px;
@@ -11,12 +18,79 @@
 .audit-header p {
   color: var(--text-muted);
   font-size: 14px;
+}
+
+.refresh-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 18px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-secondary);
+  font-size: 13px;
+  transition: all 0.15s;
+}
+
+.refresh-btn:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.refresh-btn:disabled {
+  opacity: 0.5;
+}
+
+.spinning {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.audit-stats {
+  display: flex;
+  gap: 16px;
   margin-bottom: 24px;
+}
+
+.stat-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex: 1;
+  padding: 18px 20px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--accent);
+}
+
+.stat-card div {
+  display: flex;
+  flex-direction: column;
+}
+
+.stat-value {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.stat-label {
+  font-size: 12px;
+  color: var(--text-muted);
 }
 
 .audit-search {
   position: relative;
   margin-bottom: 24px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
 
 .audit-search .search-icon {
@@ -41,6 +115,13 @@
 
 .audit-search input:focus {
   border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
+.search-count {
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
 }
 
 .audit-table-wrapper {
@@ -56,6 +137,8 @@
 }
 
 .audit-table th {
+  position: sticky;
+  top: 0;
   background: var(--bg-tertiary);
   padding: 12px 16px;
   text-align: left;
@@ -94,6 +177,16 @@
   color: var(--accent-hover);
 }
 
+.audit-no-sql {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.audit-summary {
+  max-width: 200px;
+}
+
 .audit-time {
   display: flex;
   align-items: center;
@@ -115,6 +208,11 @@
   color: var(--success);
 }
 
+.status-badge.chat {
+  background: rgba(99, 102, 241, 0.1);
+  color: var(--accent);
+}
+
 .status-badge.error {
   background: rgba(239, 68, 68, 0.1);
   color: var(--danger);
@@ -125,4 +223,11 @@
   text-align: center;
   padding: 60px;
   color: var(--text-muted);
+  font-size: 14px;
+}
+
+@media (max-width: 768px) {
+  .audit-stats {
+    flex-direction: column;
+  }
 }
