@@ -1,7 +1,7 @@
 from app.nl2sql.prompt_builder import build_nl2sql_prompt
 from app.nl2sql.sql_validator import validate_and_fix_sql
 from app.nl2sql.llm_client import call_local_llm
-from app.nl2sql.intent_classifier import classify_intent, generate_chitchat_response
+from app.nl2sql.intent_classifier import classify_intent, generate_chitchat_response, OFF_TOPIC_RESPONSE
 
 
 class NL2SQLPipeline:
@@ -60,6 +60,16 @@ class NL2SQLPipeline:
                 "sql": None,
                 "row_count": 0,
                 "summary": response_text,
+            }
+
+        if intent == "off_topic":
+            return {
+                "type": "chat",
+                "data": [],
+                "columns": [],
+                "sql": None,
+                "row_count": 0,
+                "summary": OFF_TOPIC_RESPONSE,
             }
 
         schema_info = self.get_schema_info()
