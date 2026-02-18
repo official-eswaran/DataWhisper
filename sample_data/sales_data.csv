@@ -1,0 +1,26 @@
+order_id,product,category,quantity,price,total_amount,order_date,region
+1001,Laptop,Electronics,2,55000,110000,2024-01-15,South
+1002,Office Chair,Furniture,5,8500,42500,2024-01-18,North
+1003,Smartphone,Electronics,10,25000,250000,2024-02-02,West
+1004,Desk,Furniture,3,12000,36000,2024-02-10,South
+1005,Headphones,Electronics,20,3500,70000,2024-02-22,East
+1006,Monitor,Electronics,4,18000,72000,2024-03-05,North
+1007,Keyboard,Electronics,15,2500,37500,2024-03-12,South
+1008,Bookshelf,Furniture,2,15000,30000,2024-03-25,West
+1009,Tablet,Electronics,8,32000,256000,2024-04-01,East
+1010,Printer,Electronics,3,22000,66000,2024-04-15,North
+1011,Sofa,Furniture,1,45000,45000,2024-05-02,South
+1012,Mouse,Electronics,25,1500,37500,2024-05-18,West
+1013,Cabinet,Furniture,4,20000,80000,2024-06-01,East
+1014,Laptop,Electronics,6,55000,330000,2024-06-20,North
+1015,Smartphone,Electronics,12,25000,300000,2024-07-05,South
+1016,Office Chair,Furniture,8,8500,68000,2024-07-22,West
+1017,Monitor,Electronics,5,18000,90000,2024-08-10,East
+1018,Desk,Furniture,6,12000,72000,2024-08-28,North
+1019,Headphones,Electronics,30,3500,105000,2024-09-15,South
+1020,Tablet,Electronics,4,32000,128000,2024-09-30,West
+1021,Laptop,Electronics,3,55000,165000,2024-10-12,East
+1022,Printer,Electronics,5,22000,110000,2024-10-25,North
+1023,Sofa,Furniture,2,45000,90000,2024-11-08,South
+1024,Keyboard,Electronics,20,2500,50000,2024-11-20,West
+1025,Smartphone,Electronics,15,25000,375000,2024-12-05,East

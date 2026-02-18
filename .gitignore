@@ -1,0 +1,12 @@
+node_modules/
+build/
+venv/
+__pycache__/
+*.pyc
+.env
+**/data/uploads/
+**/data/databases/
+*.duckdb
+*.db
+/tmp/
+.DS_Store

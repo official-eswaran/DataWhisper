@@ -1,0 +1,21 @@
+emp_id,emp_name,department,salary,join_date,city,performance_score
+1,Rajesh Kumar,Engineering,85000,2021-03-15,Chennai,4.2
+2,Priya Sharma,Marketing,72000,2020-07-22,Mumbai,3.8
+3,Arun Patel,Engineering,92000,2019-11-10,Bangalore,4.5
+4,Sneha Reddy,HR,65000,2022-01-05,Hyderabad,3.9
+5,Vikram Singh,Engineering,88000,2020-05-18,Delhi,4.1
+6,Anitha Nair,Marketing,70000,2021-09-30,Kochi,3.5
+7,Karthik Iyer,Sales,78000,2019-06-12,Chennai,4.3
+8,Deepa Menon,HR,62000,2022-04-20,Bangalore,3.7
+9,Suresh Babu,Engineering,95000,2018-08-08,Chennai,4.8
+10,Meena Kumari,Sales,75000,2021-02-14,Mumbai,4.0
+11,Ravi Shankar,Engineering,91000,2019-12-01,Hyderabad,4.4
+12,Lakshmi Devi,Marketing,68000,2022-06-15,Delhi,3.6
+13,Manoj Kumar,Sales,82000,2020-10-25,Bangalore,4.2
+14,Kavitha Rao,HR,67000,2021-07-09,Chennai,3.8
+15,Santhosh Pillai,Engineering,97000,2018-03-20,Kochi,4.7
+16,Divya Prakash,Marketing,71000,2022-08-12,Mumbai,3.4
+17,Ganesh Murthy,Sales,80000,2019-04-30,Hyderabad,4.1
+18,Padma Lakshmi,HR,64000,2021-11-18,Delhi,3.9
+19,Ashok Verma,Engineering,89000,2020-02-28,Bangalore,4.3
+20,Nithya Rajan,Sales,77000,2022-03-10,Chennai,3.7

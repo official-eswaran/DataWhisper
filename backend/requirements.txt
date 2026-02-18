@@ -1,0 +1,10 @@
+fastapi==0.115.0
+uvicorn==0.30.0
+python-multipart==0.0.9
+pydantic-settings==2.5.0
+pandas==2.2.0
+duckdb==1.1.0
+openpyxl==3.1.0
+requests==2.32.0
+PyJWT==2.9.0
+reportlab==4.2.0
