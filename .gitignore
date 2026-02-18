@@ -6,6 +6,8 @@ __pycache__/
 .env
 **/data/uploads/
 **/data/databases/
+sample_data/large_*.csv
+sample_data/massive_*.csv
 *.duckdb
 *.db
 /tmp/
