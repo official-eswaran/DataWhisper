@@ -1,7 +1,12 @@
 import re
 
 
-FORBIDDEN_KEYWORDS = ["DROP", "DELETE", "UPDATE", "INSERT", "ALTER", "CREATE", "TRUNCATE"]
+FORBIDDEN_KEYWORDS = [
+    "DROP", "DELETE", "UPDATE", "INSERT", "ALTER", "CREATE", "TRUNCATE",
+    # DuckDB-specific write/exec operations
+    "COPY", "EXPORT", "IMPORT", "ATTACH", "DETACH", "INSTALL", "LOAD",
+    "PRAGMA", "VACUUM", "CHECKPOINT",
+]
 
 
 def extract_sql(llm_response: str) -> str:
@@ -20,8 +25,12 @@ def extract_sql(llm_response: str) -> str:
 
 
 def is_safe_sql(sql: str) -> bool:
-    """Check that SQL only contains safe read operations."""
-    upper_sql = sql.upper()
+    """Check that SQL is a safe, read-only SELECT query."""
+    stripped = sql.strip()
+    # Must start with SELECT (case-insensitive)
+    if not re.match(r"^\s*SELECT\b", stripped, re.IGNORECASE):
+        return False
+    upper_sql = stripped.upper()
     for keyword in FORBIDDEN_KEYWORDS:
         if re.search(rf"\b{keyword}\b", upper_sql):
             return False

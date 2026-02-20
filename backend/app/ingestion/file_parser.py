@@ -25,7 +25,7 @@ def parse_file(file_path: Path) -> pd.DataFrame:
 
 def load_dataframe_to_duckdb(conn, df: pd.DataFrame, table_name: str):
     """Load a cleaned DataFrame into DuckDB as a table."""
-    conn.execute(f"DROP TABLE IF EXISTS {table_name}")
+    conn.execute(f'DROP TABLE IF EXISTS "{table_name}"')
     conn.register("_temp_df", df)
-    conn.execute(f"CREATE TABLE {table_name} AS SELECT * FROM _temp_df")
+    conn.execute(f'CREATE TABLE "{table_name}" AS SELECT * FROM _temp_df')
     conn.unregister("_temp_df")

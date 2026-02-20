@@ -1,59 +1,102 @@
 import React, { useState, useRef, useEffect } from "react";
-import { askQuestion, exportPdf } from "../../services/api";
+import { askQuestionStream, exportPdf } from "../../services/api";
 import toast from "react-hot-toast";
-import { FiSend, FiDownload, FiCode, FiCpu } from "react-icons/fi";
+import { FiSend, FiDownload, FiCode, FiCpu, FiZap } from "react-icons/fi";
 import ResultView from "../Visualization/ResultView";
 import "./ChatWindow.css";
+
+let _msgId = 0;
+const nextId = () => `msg-${++_msgId}`;
+
+// Human-readable labels for each pipeline stage
+const STAGE_LABELS = {
+  classifying: "Analyzing your question...",
+  analyzing:   "Exploring your data structure...",
+  generating:  "Crafting the SQL query...",
+  executing:   "Running the query on your data...",
+  healing:     "Fine-tuning the query...",
+};
 
 function ChatWindow({ session }) {
   const [messages, setMessages] = useState([
     {
+      id: nextId(),
       role: "assistant",
-      content: `Data loaded! Table **${session.table_name}** with ${session.rows} rows and ${session.columns.length} columns. Ask me anything about your data in plain English.`,
+      content: `Data loaded! Table "${session.table_name}" with ${session.rows} rows and ${session.columns?.length ?? 0} columns. Ask me anything about your data in plain English.`,
       type: "text",
     },
   ]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [stageMessage, setStageMessage] = useState("");
   const bottomRef = useRef(null);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+  }, [messages, stageMessage]);
 
   const handleSend = async () => {
     const question = input.trim();
     if (!question || loading) return;
 
     setInput("");
-    setMessages((prev) => [...prev, { role: "user", content: question }]);
+    setMessages((prev) => [...prev, { id: nextId(), role: "user", content: question }]);
     setLoading(true);
+    setStageMessage(STAGE_LABELS.classifying);
 
     try {
-      const res = await askQuestion(session.session_id, question);
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "assistant",
-          content: res.data.summary,
-          type: res.data.type,
-          data: res.data.data,
-          columns: res.data.columns,
-          sql: res.data.sql,
-          row_count: res.data.row_count,
+      await askQuestionStream(
+        session.session_id,
+        question,
+        // onStage — update the live stage message
+        (stage, message) => {
+          setStageMessage(STAGE_LABELS[stage] || message);
         },
-      ]);
+        // onDone — show the final result
+        (result) => {
+          setStageMessage("");
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: nextId(),
+              role: "assistant",
+              content: result.summary,
+              type: result.type,
+              data: result.data,
+              columns: result.columns,
+              sql: result.sql,
+              row_count: result.row_count,
+            },
+          ]);
+        },
+        // onError — show a friendly error message
+        (errMsg) => {
+          setStageMessage("");
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: nextId(),
+              role: "assistant",
+              content: errMsg || "Something went wrong. Try rephrasing your question.",
+              type: "error",
+            },
+          ]);
+        }
+      );
     } catch (err) {
+      setStageMessage("");
       setMessages((prev) => [
         ...prev,
         {
+          id: nextId(),
           role: "assistant",
-          content: err.response?.data?.detail || "Something went wrong. Try rephrasing your question.",
+          content: err.message || "Connection error. Please try again.",
           type: "error",
         },
       ]);
     } finally {
       setLoading(false);
+      setStageMessage("");
     }
   };
 
@@ -103,8 +146,8 @@ function ChatWindow({ session }) {
       </div>
 
       <div className="chat-messages">
-        {messages.map((msg, i) => (
-          <div key={i} className={`chat-msg ${msg.role}`}>
+        {messages.map((msg) => (
+          <div key={msg.id} className={`chat-msg ${msg.role}`}>
             {msg.role === "assistant" && (
               <div className="msg-avatar">
                 <FiCpu size={16} />
@@ -133,16 +176,22 @@ function ChatWindow({ session }) {
           </div>
         ))}
 
+        {/* Live stage indicator — shows what the AI is doing right now */}
         {loading && (
           <div className="chat-msg assistant">
-            <div className="msg-avatar">
-              <FiCpu size={16} />
+            <div className="msg-avatar thinking">
+              <FiZap size={16} />
             </div>
             <div className="msg-body">
-              <div className="typing-indicator">
-                <span></span>
-                <span></span>
-                <span></span>
+              <div className="stage-indicator">
+                <div className="typing-indicator">
+                  <span></span>
+                  <span></span>
+                  <span></span>
+                </div>
+                {stageMessage && (
+                  <span className="stage-text">{stageMessage}</span>
+                )}
               </div>
             </div>
           </div>
@@ -153,8 +202,8 @@ function ChatWindow({ session }) {
 
       {messages.length <= 1 && (
         <div className="chat-suggestions">
-          {suggestions.map((s, i) => (
-            <button key={i} className="suggestion-chip" onClick={() => setInput(s)}>
+          {suggestions.map((s) => (
+            <button key={s} className="suggestion-chip" onClick={() => setInput(s)}>
               {s}
             </button>
           ))}

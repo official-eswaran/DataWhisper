@@ -46,6 +46,7 @@ function FileUpload({ onUploadSuccess }) {
       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": [".xlsx"],
       "application/vnd.ms-excel": [".xls"],
       "application/json": [".json"],
+      "application/octet-stream": [".parquet"],
     },
     maxFiles: 1,
     disabled: uploading,
@@ -124,7 +125,7 @@ function FileUpload({ onUploadSuccess }) {
               </h4>
               {result.anomalies.map((a, i) => (
                 <div
-                  key={i}
+                  key={`${a.type}-${i}`}
                   className="anomaly-item"
                   style={{ borderLeftColor: getSeverityColor(a.severity) }}
                 >

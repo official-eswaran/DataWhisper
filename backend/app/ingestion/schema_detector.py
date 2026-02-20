@@ -45,7 +45,7 @@ def detect_and_clean_schema(df: pd.DataFrame) -> pd.DataFrame:
     # Try to convert object columns to datetime
     for col in df.select_dtypes(include=["object"]).columns:
         try:
-            df[col] = pd.to_datetime(df[col], infer_datetime_format=True)
+            df[col] = pd.to_datetime(df[col], format="mixed", dayfirst=False)
         except (ValueError, TypeError):
             pass
 

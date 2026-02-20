@@ -4,9 +4,20 @@ from pathlib import Path
 
 class Settings(BaseSettings):
     APP_NAME: str = "DataWhisper"
+    DEBUG: bool = False
+
+    # JWT
     SECRET_KEY: str = "change-this-to-a-random-secret-key"
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 480
+
+    # Default user passwords (override via .env in production)
+    ADMIN_PASSWORD: str = "Admin@2024"
+    MANAGER_PASSWORD: str = "Manager@2024"
+
+    # Account lockout
+    MAX_LOGIN_ATTEMPTS: int = 5
+    LOCKOUT_MINUTES: int = 15
 
     # Local LLM settings (Ollama)
     OLLAMA_BASE_URL: str = "http://localhost:11434"
@@ -18,6 +29,9 @@ class Settings(BaseSettings):
 
     # Max upload size in MB
     MAX_UPLOAD_SIZE_MB: int = 500
+
+    # CORS — comma-separated list of allowed origins, or "*" for LAN access
+    ALLOWED_ORIGINS: str = "*"
 
     class Config:
         env_file = ".env"

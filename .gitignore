@@ -12,3 +12,8 @@ sample_data/massive_*.csv
 *.db
 /tmp/
 .DS_Store
+
+# SSL certificates (do not commit private keys)
+*.pem
+*.key
+*.crt

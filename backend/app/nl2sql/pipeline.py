@@ -1,3 +1,5 @@
+import math
+
 from app.nl2sql.prompt_builder import build_nl2sql_prompt
 from app.nl2sql.sql_validator import validate_and_fix_sql
 from app.nl2sql.llm_client import call_local_llm
@@ -30,12 +32,13 @@ class NL2SQLPipeline:
         schema_parts = []
         for (table_name,) in tables:
             columns = self.conn.execute(
-                f"SELECT column_name, data_type FROM information_schema.columns "
-                f"WHERE table_name='{table_name}'"
+                "SELECT column_name, data_type FROM information_schema.columns "
+                "WHERE table_name = ?",
+                [table_name],
             ).fetchall()
             cols_str = ", ".join([f"{name} ({dtype})" for name, dtype in columns])
             sample = self.conn.execute(
-                f"SELECT * FROM {table_name} LIMIT 3"
+                f'SELECT * FROM "{table_name}" LIMIT 3'
             ).fetchdf().to_string(index=False)
             schema_parts.append(
                 f"Table: {table_name}\n"
@@ -82,7 +85,11 @@ class NL2SQLPipeline:
         )
 
         # Get SQL from LLM
-        llm_response = call_local_llm(prompt)
+        try:
+            llm_response = call_local_llm(prompt)
+        except RuntimeError as e:
+            return {"type": "error", "message": str(e), "sql": None}
+
         generated_sql = validate_and_fix_sql(llm_response, self.conn)
 
         if not generated_sql:
@@ -103,11 +110,17 @@ class NL2SQLPipeline:
                 f"Schema:\n{schema_info}\n\n"
                 f"Fix the SQL query. Return ONLY the corrected SQL."
             )
-            retry_response = call_local_llm(retry_prompt)
+            try:
+                retry_response = call_local_llm(retry_prompt)
+            except RuntimeError as retry_err:
+                return {"type": "error", "message": str(retry_err), "sql": None}
             generated_sql = validate_and_fix_sql(retry_response, self.conn)
             if not generated_sql:
                 return {"type": "error", "message": str(e), "sql": retry_response}
-            result_df = self.conn.execute(generated_sql).fetchdf()
+            try:
+                result_df = self.conn.execute(generated_sql).fetchdf()
+            except Exception as e2:
+                return {"type": "error", "message": str(e2), "sql": generated_sql}
 
         # Update conversation history
         self.history.append({"role": "user", "content": user_question})
@@ -116,9 +129,19 @@ class NL2SQLPipeline:
         # Determine response type
         response_type = self._detect_response_type(result_df)
 
+        # Replace NaN/Inf with None for JSON serialization
+        records = result_df.to_dict(orient="records")
+        clean_records = [
+            {
+                k: (None if isinstance(v, float) and (math.isnan(v) or math.isinf(v)) else v)
+                for k, v in row.items()
+            }
+            for row in records
+        ]
+
         return {
             "type": response_type,
-            "data": result_df.to_dict(orient="records"),
+            "data": clean_records,
             "columns": list(result_df.columns),
             "sql": generated_sql,
             "row_count": len(result_df),

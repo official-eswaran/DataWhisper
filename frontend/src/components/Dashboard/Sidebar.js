@@ -49,7 +49,7 @@ function Sidebar({ activeTab, onTabChange, onLogout, session, role }) {
           </p>
           <p className="session-rows">{session.rows} rows loaded</p>
           <p className="session-cols">
-            {session.columns.length} columns
+            {session.columns?.length ?? 0} columns
           </p>
         </div>
       )}

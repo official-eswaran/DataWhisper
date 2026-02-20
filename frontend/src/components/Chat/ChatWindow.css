@@ -133,10 +133,47 @@
   line-height: 1.5;
 }
 
+/* Stage indicator: dots + live status text */
+.stage-indicator {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  min-width: 220px;
+}
+
+.stage-text {
+  font-size: 13px;
+  color: var(--accent);
+  font-weight: 500;
+  animation: stageFadeIn 0.35s ease;
+  white-space: nowrap;
+}
+
+@keyframes stageFadeIn {
+  from { opacity: 0; transform: translateX(-6px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+/* Pulsing avatar when AI is thinking */
+.msg-avatar.thinking {
+  background: var(--accent-glow);
+  color: var(--accent);
+  animation: avatarPulse 1.8s ease-in-out infinite;
+}
+
+@keyframes avatarPulse {
+  0%, 100% { box-shadow: 0 0 0 0 var(--accent-glow); }
+  50%       { box-shadow: 0 0 0 6px transparent; }
+}
+
 .typing-indicator {
   display: flex;
   gap: 4px;
-  padding: 16px;
+  padding: 0;
 }
 
 .typing-indicator span {

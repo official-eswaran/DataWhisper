@@ -1,6 +1,7 @@
 from io import BytesIO
+from typing import Annotated
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 from reportlab.lib.pagesizes import A4
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
@@ -8,12 +9,16 @@ from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib import colors
 
 from app.core.database import get_audit_db
+from app.core.security import get_current_user
 
 router = APIRouter()
 
 
 @router.get("/pdf/{session_id}")
-def export_session_report(session_id: str):
+def export_session_report(
+    session_id: str,
+    _user: Annotated[dict, Depends(get_current_user)] = None,
+):
     """Export all queries and results from a session as a PDF report."""
     conn = get_audit_db()
     rows = conn.execute(
@@ -34,11 +39,21 @@ def export_session_report(session_id: str):
     elements.append(Paragraph(f"Session: {session_id}", styles["Normal"]))
     elements.append(Spacer(1, 20))
 
+    def _safe(val, limit=60):
+        return str(val)[:limit] if val is not None else ""
+
+    def _fmt_time(val):
+        if val is None:
+            return ""
+        s = str(val)
+        # Trim microseconds: "2024-01-15 14:23:45.123456" → "2024-01-15 14:23:45"
+        return s[:19] if len(s) > 19 else s
+
     # Query table
     if rows:
         table_data = [["#", "Question", "SQL", "Result", "Time"]]
         for i, row in enumerate(rows, 1):
-            table_data.append([str(i), row[0][:60], row[1][:60], row[2][:60], row[3]])
+            table_data.append([str(i), _safe(row[0]), _safe(row[1]), _safe(row[2]), _fmt_time(row[3])])
 
         t = Table(table_data, repeatRows=1)
         t.setStyle(TableStyle([
