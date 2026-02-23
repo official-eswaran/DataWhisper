@@ -57,9 +57,9 @@ def _log_audit(username: str, session_id: str, question: str, sql: str | None, s
     """Write one row to the audit log."""
     conn = get_audit_db()
     conn.execute(
-        "INSERT INTO audit_logs (username, session_id, natural_query, generated_sql, result_summary, status) "
-        "VALUES (?, ?, ?, ?, ?, ?)",
-        (username, session_id, question, sql or "", summary, status),
+        "INSERT INTO audit_logs (user_id, username, session_id, natural_query, generated_sql, result_summary, status) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (username, username, session_id, question, sql or "", summary, status),
     )
     conn.commit()
     conn.close()

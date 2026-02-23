@@ -127,10 +127,13 @@ def recommend_chart_type(df, question: str = "") -> str:
         if n_numeric == 2 and _DIST_WORDS.search(question):
             return "histogram"
 
-        # Categorical label
+        # Categorical label — pie only for very small, share-like sets
         if n_category == 1:
             distinct = df[label_col].nunique()
-            if distinct <= 8:
+            # Pie for share-hint questions (any size ≤8) or very small sets (≤3)
+            if _SHARE_WORDS.search(question) and distinct <= 8:
+                return "pie"
+            if distinct <= 3:
                 return "pie"
             if distinct <= 40:
                 return "bar"
@@ -146,8 +149,16 @@ def recommend_chart_type(df, question: str = "") -> str:
             return "multi_series"   # will render as multi-line
         return "multi_series"       # will render as grouped bar
 
-    # ── Multiple numeric columns, no label — scatter or table ────────────────
+    # ── Multiple numeric columns, no label ───────────────────────────────────
     if n_category == 0 and n_numeric >= 2:
+        # One of the "numeric" cols may have a time-like name (e.g. month, year
+        # extracted with EXTRACT()) — promote it to the label and use line chart
+        time_like = [c for c in numeric_cols if _DATE_NAME_RE.search(c)]
+        if time_like:
+            value_cols = [c for c in numeric_cols if c not in time_like]
+            if len(value_cols) == 1:
+                return "line"
+            return "multi_series"
         if n_numeric == 2:
             return "scatter"
         return "table"
