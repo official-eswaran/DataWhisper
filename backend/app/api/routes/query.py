@@ -197,7 +197,7 @@ async def ask_question_stream(
             history.append({"role": "assistant", "content": generated_sql})
             conversation_store[req.session_id] = history
 
-            response_type = pipeline._detect_response_type(result_df)
+            response_type = pipeline._detect_response_type(result_df, req.question)
             result = {
                 "type": response_type,
                 "data": _clean_records(result_df),

@@ -4,6 +4,7 @@ from app.nl2sql.prompt_builder import build_nl2sql_prompt
 from app.nl2sql.sql_validator import validate_and_fix_sql
 from app.nl2sql.llm_client import call_local_llm
 from app.nl2sql.intent_classifier import classify_intent, generate_chitchat_response, OFF_TOPIC_RESPONSE
+from app.visualization.chart_advisor import recommend_chart_type
 
 
 class NL2SQLPipeline:
@@ -127,7 +128,7 @@ class NL2SQLPipeline:
         self.history.append({"role": "assistant", "content": generated_sql})
 
         # Determine response type
-        response_type = self._detect_response_type(result_df)
+        response_type = self._detect_response_type(result_df, user_question)
 
         # Replace NaN/Inf with None for JSON serialization
         records = result_df.to_dict(orient="records")
@@ -148,19 +149,72 @@ class NL2SQLPipeline:
             "summary": self._generate_summary(user_question, result_df),
         }
 
-    def _detect_response_type(self, df) -> str:
-        """Decide if result is best shown as table, number, or chart."""
-        if len(df) == 1 and len(df.columns) == 1:
-            return "single_value"
-        if len(df.columns) == 2 and len(df) > 2:
-            return "chart"
-        return "table"
+    def _detect_response_type(self, df, question: str = "") -> str:
+        """Delegate chart-type recommendation to the visualization advisor."""
+        return recommend_chart_type(df, question)
 
     def _generate_summary(self, question: str, df) -> str:
-        """Generate a natural language summary of the result."""
-        if len(df) == 0:
+        """Generate a meaningful natural-language summary of the query result."""
+        import pandas as pd
+
+        rows, cols = len(df), len(df.columns)
+
+        if rows == 0:
             return "No results found for your query."
-        if len(df) == 1 and len(df.columns) == 1:
+
+        # Single scalar value
+        if rows == 1 and cols == 1:
             val = df.iloc[0, 0]
-            return f"The answer is: {val}"
-        return f"Found {len(df)} rows across {len(df.columns)} columns."
+            col = df.columns[0]
+            if isinstance(val, float):
+                formatted = f"{val:,.2f}"
+            elif isinstance(val, int):
+                formatted = f"{val:,}"
+            else:
+                formatted = str(val)
+            return f"{col}: **{formatted}**"
+
+        # Single row, multiple columns — describe as key-value pairs
+        if rows == 1:
+            parts = []
+            for col in df.columns[:5]:
+                val = df.iloc[0][col]
+                if isinstance(val, float):
+                    parts.append(f"{col}: {val:,.2f}")
+                elif val is not None:
+                    parts.append(f"{col}: {val}")
+            return "Result — " + " | ".join(parts)
+
+        # Two-column result (label + value)
+        if cols == 2:
+            label_col, value_col = df.columns[0], df.columns[1]
+            if pd.api.types.is_numeric_dtype(df[value_col]):
+                total    = df[value_col].sum()
+                top_row  = df.loc[df[value_col].idxmax()]
+                top_val  = top_row[value_col]
+                top_lbl  = top_row[label_col]
+                if isinstance(total, float):
+                    total_str = f"{total:,.2f}"
+                    top_str   = f"{top_val:,.2f}"
+                else:
+                    total_str = f"{int(total):,}"
+                    top_str   = f"{int(top_val):,}"
+                return (
+                    f"{rows} results — highest: **{top_lbl}** ({top_str}), "
+                    f"total {value_col}: {total_str}"
+                )
+            return f"{rows} results for {label_col}."
+
+        # Multi-column
+        numeric_cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
+        if numeric_cols:
+            summaries = []
+            for col in numeric_cols[:3]:
+                col_sum = df[col].sum()
+                if isinstance(col_sum, float):
+                    summaries.append(f"{col} total: {col_sum:,.2f}")
+                else:
+                    summaries.append(f"{col} total: {int(col_sum):,}")
+            return f"{rows} rows — " + " | ".join(summaries)
+
+        return f"Found {rows} rows across {cols} columns."
