@@ -13,7 +13,7 @@ from app.core.security import get_current_user
 from app.nl2sql.pipeline import NL2SQLPipeline
 from app.nl2sql.intent_classifier import classify_intent, generate_chitchat_response, OFF_TOPIC_RESPONSE
 from app.nl2sql.prompt_builder import build_nl2sql_prompt
-from app.nl2sql.llm_client import call_local_llm
+from app.nl2sql.llm_client import call_local_llm, stream_local_llm
 from app.nl2sql.sql_validator import validate_and_fix_sql
 
 router = APIRouter()
@@ -63,6 +63,43 @@ def _log_audit(username: str, session_id: str, question: str, sql: str | None, s
     )
     conn.commit()
     conn.close()
+
+
+async def _iter_llm_tokens(prompt: str):
+    """
+    Async generator that bridges the sync stream_local_llm() into async.
+    Yields str tokens one-by-one, then a final ("__done__", full_text) tuple.
+    Raises RuntimeError on LLM errors.
+    """
+    import threading
+
+    loop = asyncio.get_running_loop()
+    queue: asyncio.Queue = asyncio.Queue()
+
+    def _run():
+        try:
+            for item in stream_local_llm(prompt):
+                asyncio.run_coroutine_threadsafe(queue.put(item), loop).result()
+        except Exception as exc:
+            asyncio.run_coroutine_threadsafe(
+                queue.put(("__error__", str(exc))), loop
+            ).result()
+
+    thread = threading.Thread(target=_run, daemon=True)
+    thread.start()
+
+    while True:
+        item = await queue.get()
+        if isinstance(item, tuple):
+            if item[0] == "__error__":
+                thread.join(timeout=5)
+                raise RuntimeError(item[1])
+            # ("__done__", full_text) sentinel — yield it so caller can read full text
+            yield item
+            break
+        yield item  # regular token str
+
+    thread.join(timeout=5)
 
 
 def _clean_records(df) -> list[dict]:
@@ -150,10 +187,17 @@ async def ask_question_stream(
             schema_info = await asyncio.to_thread(pipeline.get_schema_info)
             prompt = build_nl2sql_prompt(question=req.question, schema=schema_info, history=history)
 
-            # ── Stage 3: LLM generates SQL ────────────────────────────────────
+            # ── Stage 3: LLM generates SQL — stream tokens live to frontend ──
             yield _sse({"stage": "generating", "message": "Crafting the SQL query..."})
+            llm_response = ""
             try:
-                llm_response = await asyncio.to_thread(call_local_llm, prompt)
+                async for item in _iter_llm_tokens(prompt):
+                    if isinstance(item, tuple):
+                        # ("__done__", full_text) sentinel
+                        llm_response = item[1]
+                        break
+                    # Regular token — forward to frontend immediately
+                    yield _sse({"stage": "token", "token": item})
             except RuntimeError as e:
                 yield _sse({"stage": "done", "result": {"type": "error", "message": str(e), "sql": None}})
                 return

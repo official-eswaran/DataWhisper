@@ -1,6 +1,32 @@
 from app.nl2sql.llm_client import call_local_llm
 
 
+# ── Prompt injection / jailbreak patterns ─────────────────────────────────────
+# Checked FIRST — before any data signal. Any match → off_topic immediately.
+INJECTION_PATTERNS = [
+    "ignore previous instructions",
+    "ignore all instructions",
+    "ignore your instructions",
+    "disregard previous",
+    "disregard all previous",
+    "forget your instructions",
+    "override your instructions",
+    "you are now",
+    "act as if",
+    "pretend you are",
+    "pretend to be",
+    "roleplay as",
+    "show me all passwords",
+    "show me the system prompt",
+    "reveal your prompt",
+    "print your instructions",
+    "what are your instructions",
+    "bypass your",
+    "jailbreak",
+    "do anything now",
+    "dan mode",
+]
+
 # Greetings & assistant questions
 CHITCHAT_KEYWORDS = [
     "who are you", "what are you", "your name", "what is your name",
@@ -101,6 +127,11 @@ def classify_intent(question: str) -> str:
       7. Default → data_query  (users are here to query their data)
     """
     q_lower = question.strip().lower()
+
+    # 0. Prompt injection / jailbreak — block immediately before any other check
+    for pattern in INJECTION_PATTERNS:
+        if pattern in q_lower:
+            return "off_topic"
 
     # 1. Quick check: short greetings (1-3 words)
     if len(q_lower.split()) <= 3 and any(

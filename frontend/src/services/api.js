@@ -47,11 +47,12 @@ export const askQuestion = (sessionId, question) =>
 
 /**
  * Streaming query — calls /query/stream and fires callbacks for each event.
- * onStage(stage, message)  — called for each intermediate stage
+ * onStage(stage, message)  — called for each intermediate stage label
+ * onToken(token)           — called for each LLM token as it streams in
  * onDone(result)           — called with the final result object
  * onError(message)         — called on any error
  */
-export const askQuestionStream = async (sessionId, question, onStage, onDone, onError) => {
+export const askQuestionStream = async (sessionId, question, onStage, onDone, onError, onToken) => {
   const token = localStorage.getItem("token");
 
   let response;
@@ -102,6 +103,8 @@ export const askQuestionStream = async (sessionId, question, onStage, onDone, on
           onDone(data.result);
         } else if (data.stage === "error") {
           onError(data.message);
+        } else if (data.stage === "token") {
+          if (onToken) onToken(data.token);
         } else {
           onStage(data.stage, data.message);
         }

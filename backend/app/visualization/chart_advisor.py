@@ -30,6 +30,14 @@ _DATE_NAME_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Column names that represent individual entity identifiers — named lists
+# should render as table, not bar/pie
+_NAME_COL_RE = re.compile(
+    r"\b(name|emp_name|employee|person|user|customer|client|contact|"
+    r"full_name|first_name|last_name|fname|lname|username|title|label)\b",
+    re.IGNORECASE,
+)
+
 # Keywords in the question that hint at a specific chart
 _TREND_WORDS = re.compile(r"\b(trend|over time|by year|by month|by week|over the|growth|change)\b", re.IGNORECASE)
 _DIST_WORDS  = re.compile(r"\b(distribution|spread|range|histogram|frequency|how.*distribut)\b", re.IGNORECASE)
@@ -130,6 +138,10 @@ def recommend_chart_type(df, question: str = "") -> str:
         # Categorical label — pie only for very small, share-like sets
         if n_category == 1:
             distinct = df[label_col].nunique()
+            # Named-entity columns (emp_name, customer_name, etc.) with many
+            # distinct values are ranked / filtered lists → always render as table
+            if _NAME_COL_RE.search(label_col) and distinct > 5:
+                return "table"
             # Pie for share-hint questions (any size ≤8) or very small sets (≤3)
             if _SHARE_WORDS.search(question) and distinct <= 8:
                 return "pie"

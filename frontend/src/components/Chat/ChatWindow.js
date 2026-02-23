@@ -8,17 +8,16 @@ import "./ChatWindow.css";
 let _msgId = 0;
 const nextId = () => `msg-${++_msgId}`;
 
-// Human-readable labels for each pipeline stage
 const STAGE_LABELS = {
   classifying: "Analyzing your question...",
   analyzing:   "Exploring your data structure...",
-  generating:  "Crafting the SQL query...",
-  executing:   "Running the query on your data...",
+  generating:  "Writing SQL query",       // token stream appends here
+  executing:   "Running the query...",
   healing:     "Fine-tuning the query...",
 };
 
 function ChatWindow({ session }) {
-  const [messages, setMessages] = useState([
+  const [messages, setMessages]         = useState([
     {
       id: nextId(),
       role: "assistant",
@@ -26,20 +25,23 @@ function ChatWindow({ session }) {
       type: "text",
     },
   ]);
-  const [input, setInput] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [input, setInput]               = useState("");
+  const [loading, setLoading]           = useState(false);
   const [stageMessage, setStageMessage] = useState("");
-  const bottomRef = useRef(null);
+  // live SQL tokens streaming in during generation
+  const [streamingSQL, setStreamingSQL] = useState("");
+  const bottomRef                       = useRef(null);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, stageMessage]);
+  }, [messages, stageMessage, streamingSQL]);
 
   const handleSend = async () => {
     const question = input.trim();
     if (!question || loading) return;
 
     setInput("");
+    setStreamingSQL("");
     setMessages((prev) => [...prev, { id: nextId(), role: "user", content: question }]);
     setLoading(true);
     setStageMessage(STAGE_LABELS.classifying);
@@ -48,13 +50,15 @@ function ChatWindow({ session }) {
       await askQuestionStream(
         session.session_id,
         question,
-        // onStage — update the live stage message
-        (stage, message) => {
-          setStageMessage(STAGE_LABELS[stage] || message);
+        // onStage
+        (stage) => {
+          setStageMessage(STAGE_LABELS[stage] || "");
+          if (stage !== "generating") setStreamingSQL("");
         },
-        // onDone — show the final result
+        // onDone
         (result) => {
           setStageMessage("");
+          setStreamingSQL("");
           setMessages((prev) => [
             ...prev,
             {
@@ -69,9 +73,10 @@ function ChatWindow({ session }) {
             },
           ]);
         },
-        // onError — show a friendly error message
+        // onError
         (errMsg) => {
           setStageMessage("");
+          setStreamingSQL("");
           setMessages((prev) => [
             ...prev,
             {
@@ -81,10 +86,15 @@ function ChatWindow({ session }) {
               type: "error",
             },
           ]);
-        }
+        },
+        // onToken — append each SQL token as it arrives
+        (token) => {
+          setStreamingSQL((prev) => prev + token);
+        },
       );
     } catch (err) {
       setStageMessage("");
+      setStreamingSQL("");
       setMessages((prev) => [
         ...prev,
         {
@@ -97,6 +107,7 @@ function ChatWindow({ session }) {
     } finally {
       setLoading(false);
       setStageMessage("");
+      setStreamingSQL("");
     }
   };
 
@@ -129,6 +140,9 @@ function ChatWindow({ session }) {
     "Show average by category",
     "Any trends over time?",
   ];
+
+  // Is the LLM currently streaming SQL tokens?
+  const isStreamingSQL = loading && streamingSQL.length > 0;
 
   return (
     <div className="chat-container">
@@ -176,23 +190,35 @@ function ChatWindow({ session }) {
           </div>
         ))}
 
-        {/* Live stage indicator — shows what the AI is doing right now */}
+        {/* Live thinking/stage indicator */}
         {loading && (
           <div className="chat-msg assistant">
-            <div className="msg-avatar thinking">
+            <div className={`msg-avatar ${isStreamingSQL ? "" : "thinking"}`}>
               <FiZap size={16} />
             </div>
             <div className="msg-body">
-              <div className="stage-indicator">
-                <div className="typing-indicator">
-                  <span></span>
-                  <span></span>
-                  <span></span>
+              {isStreamingSQL ? (
+                /* Token stream: show SQL being written in real-time */
+                <div className="streaming-sql-wrapper">
+                  <span className="streaming-label">
+                    <FiCode size={11} /> Writing SQL
+                    <span className="stream-cursor">▌</span>
+                  </span>
+                  <pre className="streaming-sql">{streamingSQL}</pre>
                 </div>
-                {stageMessage && (
-                  <span className="stage-text">{stageMessage}</span>
-                )}
-              </div>
+              ) : (
+                /* Stage label + typing dots when no tokens yet */
+                <div className="stage-indicator">
+                  <div className="typing-indicator">
+                    <span></span>
+                    <span></span>
+                    <span></span>
+                  </div>
+                  {stageMessage && (
+                    <span className="stage-text">{stageMessage}</span>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         )}

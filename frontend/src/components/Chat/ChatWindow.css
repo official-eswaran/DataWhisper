@@ -274,3 +274,52 @@
 .send-btn:disabled {
   opacity: 0.4;
 }
+
+/* ── Streaming SQL display ───────────────────────────────────────────────── */
+.streaming-sql-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.streaming-label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--accent);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  font-weight: 600;
+}
+
+.stream-cursor {
+  display: inline-block;
+  animation: blink 0.7s step-end infinite;
+  color: var(--accent);
+  font-size: 14px;
+  line-height: 1;
+  margin-left: 1px;
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0; }
+}
+
+.streaming-sql {
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 6px;
+  padding: 10px 14px;
+  font-size: 12px;
+  color: #a5b4fc;
+  font-family: "JetBrains Mono", "Fira Code", "Courier New", monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 160px;
+  overflow-y: auto;
+  margin: 0;
+  line-height: 1.6;
+}
