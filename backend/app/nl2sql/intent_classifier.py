@@ -28,10 +28,14 @@ INJECTION_PATTERNS = [
 ]
 
 # Greetings & assistant questions
+# IMPORTANT: keep only multi-char or space-padded tokens here —
+# single short words like "hey" match as substrings of normal words
+# (e.g. "hey" matches inside "they", "key", "monkey").
+# Short greetings are already caught by the startswith check in step 1.
 CHITCHAT_KEYWORDS = [
     "who are you", "what are you", "your name", "what is your name",
-    "how are you", "hello", "hi ", "hey", "good morning", "good evening",
-    "thank you", "thanks", "bye", "goodbye", "what can you do",
+    "how are you", "hello ", "hi ", "good morning", "good evening",
+    "thank you", "thanks", "bye ", "goodbye", "what can you do",
     "tell me about yourself", "introduce yourself",
     "are you ai", "are you a bot", "are you human", "who made you",
     "who created you", "what's up", "how's it going", "nice to meet",
@@ -63,17 +67,29 @@ OFF_TOPIC_KEYWORDS = [
     "tell me a joke", "make me laugh",
 ]
 
+# Unambiguous data-action starters — if question begins with one of these
+# we short-circuit directly to data_query BEFORE any chitchat checks.
+DATA_ACTION_STARTERS = [
+    # Unambiguous data retrieval verbs — these can ONLY mean data queries
+    "show ", "list ", "display ", "fetch ", "retrieve ",
+    "count ", "calculate ", "compute ", "rank ", "filter ",
+    # These are data-specific enough in context
+    "how many ", "how much ", "how long ",
+    "who earns", "who has the highest", "who has the lowest",
+]
+
 # Data query patterns → SQL pipeline
 DATA_KEYWORDS = [
     # Action verbs
     "show", "list", "display", "get", "find", "give", "fetch", "retrieve",
     # Aggregations
     "total", "average", "count", "sum", "max", "min", "calculate", "compute",
-    "aggregate", "distinct", "unique",
+    "aggregate", "distinct", "unique", "median", "stddev", "variance",
     # Questions
-    "how many", "how much", "which", "what is the total", "what is the average",
+    "how many", "how much", "how long", "how old", "which", "who earns",
+    "what is the total", "what is the average",
     # Business terms
-    "revenue", "sales", "profit", "salary", "cost",
+    "revenue", "sales", "profit", "salary", "cost", "performance",
     # Grouping / filtering
     "group by", "by region", "by category", "by department", "by month",
     "by country", "by state", "by year", "by quarter", "by city",
@@ -84,9 +100,15 @@ DATA_KEYWORDS = [
     # Trends / analysis
     "trend", "compare", "growth", "decline", "increase", "decrease",
     "percentage", "ratio", "breakdown", "distribution",
-    # Time
+    # Temporal / duration queries
+    "how many years", "how long", "tenure", "years of", "since joining",
+    "joined in", "joined before", "joined after", "months since",
     "monthly", "yearly", "quarterly", "weekly", "daily",
     "per region", "per category", "per product", "per city",
+    # Window / analytical
+    "running total", "cumulative", "rolling", "moving average",
+    "previous row", "next row", "difference from", "compared to previous",
+    "earn than", "more than previous", "each employee",
     # Data structure
     "rows", "columns", "records", "null", "missing", "empty", "duplicate",
 ]
@@ -132,6 +154,13 @@ def classify_intent(question: str) -> str:
     for pattern in INJECTION_PATTERNS:
         if pattern in q_lower:
             return "off_topic"
+
+    # 0.5 Unambiguous data-action starters — short-circuit to data_query
+    # BEFORE chitchat checks to prevent substring false positives (e.g.
+    # "they" contains "hey", triggering chitchat incorrectly).
+    for starter in DATA_ACTION_STARTERS:
+        if q_lower.startswith(starter):
+            return "data_query"
 
     # 1. Quick check: short greetings (1-3 words)
     if len(q_lower.split()) <= 3 and any(
