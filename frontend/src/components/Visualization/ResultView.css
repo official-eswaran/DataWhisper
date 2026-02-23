@@ -1,3 +1,4 @@
+/* ── Single value ─────────────────────────────────────────────────────────── */
 .result-single {
   display: flex;
   flex-direction: column;
@@ -22,18 +23,91 @@
   color: var(--accent);
 }
 
+/* ── Result wrapper (outermost) ────────────────────────────────────────────── */
+.result-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+/* ── Toolbar ──────────────────────────────────────────────────────────────── */
+.result-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.type-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 3px;
+}
+
+.toggle-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+  white-space: nowrap;
+}
+
+.toggle-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.toggle-btn.active {
+  background: var(--accent);
+  color: #fff;
+}
+
+.chart-download-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg-tertiary);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+  flex-shrink: 0;
+}
+
+.chart-download-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+/* ── Chart container ─────────────────────────────────────────────────────── */
 .result-chart {
-  padding: 20px;
+  padding: 20px 12px 12px;
   background: var(--bg-tertiary);
   border-radius: var(--radius);
   border: 1px solid var(--border);
 }
 
+/* ── Table ───────────────────────────────────────────────────────────────── */
 .result-table-wrapper {
   overflow-x: auto;
   border: 1px solid var(--border);
-  border-radius: var(--radius);
-  max-height: 400px;
+  border-radius: var(--radius) var(--radius) 0 0;
+  max-height: 380px;
   overflow-y: auto;
 }
 
@@ -56,6 +130,17 @@
   letter-spacing: 0.3px;
   border-bottom: 1px solid var(--border);
   white-space: nowrap;
+  z-index: 1;
+}
+
+.sortable-th {
+  cursor: pointer;
+  user-select: none;
+  transition: color 0.15s;
+}
+
+.sortable-th:hover {
+  color: var(--accent);
 }
 
 .result-table td {
@@ -69,11 +154,43 @@
   background: var(--bg-hover);
 }
 
-.table-truncated {
-  text-align: center;
-  padding: 10px;
+/* ── Pagination ──────────────────────────────────────────────────────────── */
+.table-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 10px 14px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-top: none;
+  border-radius: 0 0 var(--radius) var(--radius);
+}
+
+.page-btn {
+  padding: 4px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.page-btn:hover:not(:disabled) {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+
+.page-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.page-info {
   font-size: 12px;
   color: var(--text-muted);
-  background: var(--bg-tertiary);
-  border-top: 1px solid var(--border);
+  white-space: nowrap;
 }
