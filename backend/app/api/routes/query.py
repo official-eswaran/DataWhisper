@@ -1,25 +1,43 @@
+"""Natural-language query endpoints (streaming + non-streaming).
+
+Both paths:
+* verify the caller owns the session (authorization / IDOR fix),
+* reuse the shared pipeline + result_formatter (no duplicated logic),
+* cache the per-session schema (uploaded data is immutable per session_id),
+* never leak raw exception text to the client.
+
+NOTE: no ``from __future__ import annotations`` — combined with the slowapi
+decorator it makes FastAPI misclassify the Pydantic body as a query parameter.
+"""
 import asyncio
 import json
-import math
+import logging
 import re as re_module
+import threading
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, field_validator
 
-from app.core.database import require_user_duckdb, get_audit_db
+from app.core.config import settings
+from app.core.database import require_user_duckdb, user_can_access_session, write_audit_log
+from app.core.ratelimit import limiter
 from app.core.security import get_current_user
-from app.nl2sql.pipeline import NL2SQLPipeline
-from app.nl2sql.intent_classifier import classify_intent, generate_chitchat_response, OFF_TOPIC_RESPONSE
+from app.core.session_store import conversation_store
+from app.nl2sql.intent_classifier import (
+    OFF_TOPIC_RESPONSE,
+    classify_intent,
+    generate_chitchat_response,
+)
+from app.nl2sql.llm_client import llm_cache_lookup, llm_cache_store, stream_local_llm
+from app.nl2sql.pipeline import NL2SQLPipeline, execute_with_healing, get_schema_info
 from app.nl2sql.prompt_builder import build_nl2sql_prompt
-from app.nl2sql.llm_client import call_local_llm, stream_local_llm
+from app.nl2sql.result_formatter import build_result, chat_result
 from app.nl2sql.sql_validator import validate_and_fix_sql
 
+logger = logging.getLogger("datawhisper.query")
 router = APIRouter()
-
-# In-memory conversation store (per session)
-conversation_store: dict[str, list] = {}
 
 _UUID_RE = re_module.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
@@ -49,30 +67,29 @@ class QueryRequest(BaseModel):
 
 
 def _sse(data: dict) -> str:
-    """Format a dict as a Server-Sent Event line."""
     return f"data: {json.dumps(data)}\n\n"
 
 
-def _log_audit(username: str, session_id: str, question: str, sql: str | None, summary: str, status: str):
-    """Write one row to the audit log."""
-    conn = get_audit_db()
-    conn.execute(
-        "INSERT INTO audit_logs (user_id, username, session_id, natural_query, generated_sql, result_summary, status) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (username, username, session_id, question, sql or "", summary, status),
-    )
-    conn.commit()
-    conn.close()
+def _authorize(session_id: str, user: dict) -> None:
+    """Raise 404 unless the caller may access this session (no info leak on 403)."""
+    if not user_can_access_session(
+        session_id, user.get("sub", ""), user.get("role", ""), user.get("org_id", -1)
+    ):
+        # Deliberately 404 (not 403) so users cannot probe others' session ids.
+        raise HTTPException(404, "Session not found. Please upload data first.")
+
+
+def _cached_schema(session_id: str, conn) -> str:
+    schema = conversation_store.get_schema(session_id)
+    if schema is None:
+        schema = get_schema_info(conn)
+        conversation_store.set_schema(session_id, schema)
+    return schema
 
 
 async def _iter_llm_tokens(prompt: str):
-    """
-    Async generator that bridges the sync stream_local_llm() into async.
-    Yields str tokens one-by-one, then a final ("__done__", full_text) tuple.
-    Raises RuntimeError on LLM errors.
-    """
-    import threading
-
+    """Bridge the sync token generator into async. Yields tokens, then
+    ("__done__", full_text); raises RuntimeError on LLM errors."""
     loop = asyncio.get_running_loop()
     queue: asyncio.Queue = asyncio.Queue()
 
@@ -80,10 +97,10 @@ async def _iter_llm_tokens(prompt: str):
         try:
             for item in stream_local_llm(prompt):
                 asyncio.run_coroutine_threadsafe(queue.put(item), loop).result()
-        except Exception as exc:
-            asyncio.run_coroutine_threadsafe(
-                queue.put(("__error__", str(exc))), loop
-            ).result()
+        except Exception as exc:  # noqa: BLE001 — forwarded as a sentinel
+            asyncio.run_coroutine_threadsafe(queue.put(("__error__", str(exc))), loop).result()
+        finally:
+            asyncio.run_coroutine_threadsafe(queue.put(("__eos__", None)), loop).result()
 
     thread = threading.Thread(target=_run, daemon=True)
     thread.start()
@@ -91,64 +108,63 @@ async def _iter_llm_tokens(prompt: str):
     while True:
         item = await queue.get()
         if isinstance(item, tuple):
-            if item[0] == "__error__":
-                thread.join(timeout=5)
+            tag = item[0]
+            if tag == "__error__":
                 raise RuntimeError(item[1])
-            # ("__done__", full_text) sentinel — yield it so caller can read full text
-            yield item
-            break
-        yield item  # regular token str
+            if tag == "__eos__":
+                break
+            yield item  # ("__done__", full_text)
+            continue
+        yield item
 
     thread.join(timeout=5)
 
 
-def _clean_records(df) -> list[dict]:
-    """Replace NaN/Inf with None so the result is JSON-safe."""
-    return [
-        {k: (None if isinstance(v, float) and (math.isnan(v) or math.isinf(v)) else v)
-         for k, v in row.items()}
-        for row in df.to_dict(orient="records")
-    ]
-
-
-# ── Non-streaming endpoint (kept for compatibility) ────────────────────────────
+# ── Non-streaming endpoint ────────────────────────────────────────────────────
 @router.post("/")
+@limiter.limit(settings.RATE_LIMIT_QUERY)
 async def ask_question(
+    request: Request,
     req: QueryRequest,
     current_user: Annotated[dict, Depends(get_current_user)],
 ):
-    """Ask a natural language question about your uploaded data."""
+    _authorize(req.session_id, current_user)
+    username = current_user.get("sub", "unknown")
+    org_id = current_user.get("org_id", -1)
+
     try:
         conn = require_user_duckdb(req.session_id)
     except FileNotFoundError:
         raise HTTPException(404, "Session not found. Please upload data first.")
 
+    history = conversation_store.get_history(req.session_id)
     try:
-        history = conversation_store.setdefault(req.session_id, [])
         pipeline = NL2SQLPipeline(db_conn=conn, conversation_history=history)
-        result = pipeline.run(req.question)
-        conversation_store[req.session_id] = pipeline.history
+        result = await asyncio.to_thread(pipeline.run, req.question)
     finally:
         conn.close()
 
-    username = current_user.get("sub", "unknown")
-    _log_audit(username, req.session_id, req.question, result.get("sql"), result.get("summary", ""), result.get("type", "success"))
+    if result.get("type") != "error" and result.get("sql") is not None:
+        conversation_store.append_turn(req.session_id, req.question, result["sql"])
+    write_audit_log(
+        username, org_id, req.session_id, req.question,
+        result.get("sql"), result.get("summary", result.get("message", "")),
+        result.get("type", "success"),
+    )
     return result
 
 
-# ── Streaming endpoint — sends live stage events then the final result ─────────
+# ── Streaming endpoint (SSE) ──────────────────────────────────────────────────
 @router.post("/stream")
+@limiter.limit(settings.RATE_LIMIT_QUERY)
 async def ask_question_stream(
+    request: Request,
     req: QueryRequest,
     current_user: Annotated[dict, Depends(get_current_user)],
 ):
-    """
-    SSE streaming query endpoint.
-    Yields stage events so the UI can show what the AI is doing in real time,
-    then yields the final result as a 'done' event.
-    """
-
+    _authorize(req.session_id, current_user)
     username = current_user.get("sub", "unknown")
+    org_id = current_user.get("org_id", -1)
 
     async def generate():
         conn = None
@@ -159,100 +175,79 @@ async def ask_question_stream(
                 yield _sse({"stage": "error", "message": "Session not found. Please upload data first."})
                 return
 
-            history = conversation_store.setdefault(req.session_id, [])
+            history = conversation_store.get_history(req.session_id)
 
-            # ── Stage 1: Classify intent ──────────────────────────────────────
+            # Stage 1 — intent
             yield _sse({"stage": "classifying", "message": "Analyzing your question..."})
             intent = await asyncio.to_thread(classify_intent, req.question)
 
             if intent == "chitchat":
-                response_text = generate_chitchat_response(req.question)
-                history.append({"role": "user", "content": req.question})
-                history.append({"role": "assistant", "content": response_text})
-                conversation_store[req.session_id] = history
-                result = {"type": "chat", "data": [], "columns": [], "sql": None, "row_count": 0, "summary": response_text}
-                _log_audit(username, req.session_id, req.question, None, response_text, "chat")
-                yield _sse({"stage": "done", "result": result})
+                text = generate_chitchat_response(req.question)
+                conversation_store.append_turn(req.session_id, req.question, text)
+                write_audit_log(username, org_id, req.session_id, req.question, None, text, "chat")
+                yield _sse({"stage": "done", "result": chat_result(text)})
                 return
 
             if intent == "off_topic":
-                result = {"type": "chat", "data": [], "columns": [], "sql": None, "row_count": 0, "summary": OFF_TOPIC_RESPONSE}
-                _log_audit(username, req.session_id, req.question, None, OFF_TOPIC_RESPONSE, "off_topic")
-                yield _sse({"stage": "done", "result": result})
+                write_audit_log(username, org_id, req.session_id, req.question, None, OFF_TOPIC_RESPONSE, "off_topic")
+                yield _sse({"stage": "done", "result": chat_result(OFF_TOPIC_RESPONSE)})
                 return
 
-            # ── Stage 2: Load schema ──────────────────────────────────────────
+            # Stage 2 — schema (cached per session)
             yield _sse({"stage": "analyzing", "message": "Exploring your data structure..."})
-            pipeline = NL2SQLPipeline(db_conn=conn, conversation_history=history)
-            schema_info = await asyncio.to_thread(pipeline.get_schema_info)
+            schema_info = await asyncio.to_thread(_cached_schema, req.session_id, conn)
             prompt = build_nl2sql_prompt(question=req.question, schema=schema_info, history=history)
 
-            # ── Stage 3: LLM generates SQL — stream tokens live to frontend ──
+            # Stage 3 — generate SQL. Serve from cache when the identical prompt
+            # was seen before (repeated question on immutable session data).
             yield _sse({"stage": "generating", "message": "Crafting the SQL query..."})
-            llm_response = ""
-            try:
-                async for item in _iter_llm_tokens(prompt):
-                    if isinstance(item, tuple):
-                        # ("__done__", full_text) sentinel
-                        llm_response = item[1]
-                        break
-                    # Regular token — forward to frontend immediately
-                    yield _sse({"stage": "token", "token": item})
-            except RuntimeError as e:
-                yield _sse({"stage": "done", "result": {"type": "error", "message": str(e), "sql": None}})
-                return
+            cached = llm_cache_lookup(prompt)
+            if cached is not None:
+                yield _sse({"stage": "token", "token": cached})
+                llm_response = cached
+            else:
+                llm_response = ""
+                try:
+                    async for item in _iter_llm_tokens(prompt):
+                        if isinstance(item, tuple):
+                            llm_response = item[1]
+                            break
+                        yield _sse({"stage": "token", "token": item})
+                except RuntimeError as exc:
+                    yield _sse({"stage": "done", "result": {"type": "error", "message": str(exc), "sql": None}})
+                    return
+                llm_cache_store(prompt, llm_response)
 
             generated_sql = validate_and_fix_sql(llm_response, conn)
             if not generated_sql:
-                result = {"type": "error", "message": "Could not generate a valid SQL query. Please rephrase.", "sql": llm_response}
-                yield _sse({"stage": "done", "result": result})
+                yield _sse({"stage": "done", "result": {
+                    "type": "error",
+                    "message": "Could not generate a valid SQL query. Please rephrase.",
+                    "sql": None,
+                }})
                 return
 
-            # ── Stage 4: Execute on DuckDB ────────────────────────────────────
+            # Stage 4 — execute (with one self-healing retry)
             yield _sse({"stage": "executing", "message": "Running the query on your data..."})
             try:
-                result_df = conn.execute(generated_sql).fetchdf()
-            except Exception as e:
-                # Self-healing retry
-                yield _sse({"stage": "healing", "message": "Fine-tuning the query..."})
-                retry_prompt = (
-                    f"The following SQL failed:\n{generated_sql}\n\n"
-                    f"Error: {str(e)}\n\nSchema:\n{schema_info}\n\n"
-                    f"Fix the SQL. Return ONLY the corrected SQL."
-                )
-                try:
-                    retry_response = await asyncio.to_thread(call_local_llm, retry_prompt)
-                except RuntimeError as retry_err:
-                    yield _sse({"stage": "done", "result": {"type": "error", "message": str(retry_err), "sql": None}})
-                    return
+                result_df = await asyncio.to_thread(execute_with_healing, conn, generated_sql, schema_info)
+            except RuntimeError as exc:
+                yield _sse({"stage": "done", "result": {"type": "error", "message": str(exc), "sql": generated_sql}})
+                return
 
-                generated_sql = validate_and_fix_sql(retry_response, conn)
-                if not generated_sql:
-                    yield _sse({"stage": "done", "result": {"type": "error", "message": str(e), "sql": retry_response}})
-                    return
-                try:
-                    result_df = conn.execute(generated_sql).fetchdf()
-                except Exception as e2:
-                    yield _sse({"stage": "done", "result": {"type": "error", "message": str(e2), "sql": generated_sql}})
-                    return
+            if len(result_df) > settings.MAX_RESULT_ROWS:
+                result_df = result_df.head(settings.MAX_RESULT_ROWS)
 
-            # ── Format and return result ──────────────────────────────────────
-            history.append({"role": "user", "content": req.question})
-            history.append({"role": "assistant", "content": generated_sql})
-            conversation_store[req.session_id] = history
-
-            response_type = pipeline._detect_response_type(result_df, req.question)
-            result = {
-                "type": response_type,
-                "data": _clean_records(result_df),
-                "columns": list(result_df.columns),
-                "sql": generated_sql,
-                "row_count": len(result_df),
-                "summary": pipeline._generate_summary(req.question, result_df),
-            }
-            _log_audit(username, req.session_id, req.question, generated_sql, result.get("summary", ""), response_type)
+            conversation_store.append_turn(req.session_id, req.question, generated_sql)
+            result = build_result(result_df, req.question, generated_sql)
+            write_audit_log(username, org_id, req.session_id, req.question, generated_sql, result["summary"], result["type"])
             yield _sse({"stage": "done", "result": result})
 
+        except Exception:  # noqa: BLE001 — last-resort guard for the stream
+            logger.exception("Unhandled error in query stream")
+            yield _sse({"stage": "done", "result": {
+                "type": "error", "message": "Something went wrong processing your question.", "sql": None,
+            }})
         finally:
             if conn:
                 conn.close()

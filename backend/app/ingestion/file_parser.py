@@ -1,5 +1,6 @@
-import pandas as pd
 from pathlib import Path
+
+import pandas as pd
 
 from app.ingestion.schema_detector import detect_and_clean_schema
 

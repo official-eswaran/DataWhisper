@@ -1,0 +1,86 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: Backend — lint, test, audit
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Lint (ruff)
+        run: ruff check app tests
+
+      - name: Test with coverage gate
+        env:
+          DEBUG: "true"
+          SECRET_KEY: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+        run: pytest --cov=app --cov-report=term-missing --cov-fail-under=70
+
+      - name: Dependency vulnerability audit (pip-audit)
+        run: pip-audit -r requirements.txt --strict --progress-spinner off
+
+  frontend:
+    name: Frontend — build, test, audit
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+      - name: Test
+        run: CI=true npm test -- --watchAll=false --passWithNoTests
+      - name: Build
+        run: npm run build
+      - name: Dependency audit (shipped/runtime deps only)
+        # The frontend ships a static build, so only runtime deps matter; CRA's
+        # dev toolchain is excluded. Fails on high/critical runtime advisories.
+        run: npm audit --omit=dev --audit-level=high
+
+  images:
+    name: Images — build & scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build backend image
+        run: docker build -t datawhisper-backend:${{ github.sha }} ./backend
+      - name: Build frontend image
+        run: docker build -t datawhisper-frontend:${{ github.sha }} ./frontend
+
+      - name: Scan backend image (Trivy)
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          image-ref: datawhisper-backend:${{ github.sha }}
+          severity: "HIGH,CRITICAL"
+          ignore-unfixed: true
+          exit-code: "1"
+      - name: Scan frontend image (Trivy)
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          image-ref: datawhisper-frontend:${{ github.sha }}
+          severity: "HIGH,CRITICAL"
+          ignore-unfixed: true
+          exit-code: "1"

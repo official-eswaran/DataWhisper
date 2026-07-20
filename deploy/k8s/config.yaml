@@ -1,0 +1,21 @@
+# Non-secret configuration. Secrets (SECRET_KEY, DATABASE_URL, seed passwords)
+# live in a Secret — see secret.example.yaml.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: datawhisper-config
+  namespace: datawhisper
+data:
+  DEBUG: "false"
+  OLLAMA_BASE_URL: "http://ollama:11434"
+  REDIS_URL: "redis://redis:6379/0"
+  LLM_MODEL: "llama3.2:3b"
+  LLM_MAX_CONCURRENCY: "4"
+  LOG_JSON: "true"
+  METRICS_ENABLED: "true"
+  MAX_UPLOAD_SIZE_MB: "500"
+  SESSION_TTL_HOURS: "24"
+  # Explicit origins in production (no "*").
+  ALLOWED_ORIGINS: "https://data.example.com"
+  DATABASE_DIR: "/app/data/databases"
+  UPLOAD_DIR: "/app/data/uploads"

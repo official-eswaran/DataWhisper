@@ -17,3 +17,12 @@ sample_data/massive_*.csv
 *.pem
 *.key
 *.crt
+
+# Test / coverage / tooling artifacts
+.coverage
+coverage.xml
+htmlcov/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+backups/

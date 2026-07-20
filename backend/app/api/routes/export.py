@@ -1,14 +1,23 @@
+"""PDF session-report export.
+
+Fixes vs. the previous version:
+* Queries by ``session_id`` (the old code filtered a non-existent ``user_id``
+  column and crashed).
+* Verifies the caller owns the session before returning its history (IDOR fix).
+"""
+from __future__ import annotations
+
 from io import BytesIO
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
-from reportlab.lib.pagesizes import A4
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
-from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib import colors
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
-from app.core.database import get_audit_db
+from app.core.database import fetch_session_logs, user_can_access_session
 from app.core.security import get_current_user
 
 router = APIRouter()
@@ -17,27 +26,23 @@ router = APIRouter()
 @router.get("/pdf/{session_id}")
 def export_session_report(
     session_id: str,
-    _user: Annotated[dict, Depends(get_current_user)] = None,
+    current_user: Annotated[dict, Depends(get_current_user)],
 ):
-    """Export all queries and results from a session as a PDF report."""
-    conn = get_audit_db()
-    rows = conn.execute(
-        "SELECT natural_query, generated_sql, result_summary, created_at "
-        "FROM audit_logs WHERE user_id = ? ORDER BY created_at ASC",
-        (session_id,),
-    ).fetchall()
-    conn.close()
+    org_id = current_user.get("org_id", -1)
+    if not user_can_access_session(session_id, current_user.get("sub", ""), current_user.get("role", ""), org_id):
+        raise HTTPException(404, "Session not found.")
+
+    rows = fetch_session_logs(session_id, org_id)
 
     buffer = BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=A4)
     styles = getSampleStyleSheet()
-    elements = []
-
-    # Title
-    elements.append(Paragraph("DataWhisper — Session Report", styles["Title"]))
-    elements.append(Spacer(1, 20))
-    elements.append(Paragraph(f"Session: {session_id}", styles["Normal"]))
-    elements.append(Spacer(1, 20))
+    elements = [
+        Paragraph("DataWhisper — Session Report", styles["Title"]),
+        Spacer(1, 20),
+        Paragraph(f"Session: {session_id}", styles["Normal"]),
+        Spacer(1, 20),
+    ]
 
     def _safe(val, limit=60):
         return str(val)[:limit] if val is not None else ""
@@ -46,15 +51,12 @@ def export_session_report(
         if val is None:
             return ""
         s = str(val)
-        # Trim microseconds: "2024-01-15 14:23:45.123456" → "2024-01-15 14:23:45"
         return s[:19] if len(s) > 19 else s
 
-    # Query table
     if rows:
         table_data = [["#", "Question", "SQL", "Result", "Time"]]
         for i, row in enumerate(rows, 1):
             table_data.append([str(i), _safe(row[0]), _safe(row[1]), _safe(row[2]), _fmt_time(row[3])])
-
         t = Table(table_data, repeatRows=1)
         t.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (-1, 0), colors.grey),
@@ -69,7 +71,6 @@ def export_session_report(
 
     doc.build(elements)
     buffer.seek(0)
-
     return StreamingResponse(
         buffer,
         media_type="application/pdf",
