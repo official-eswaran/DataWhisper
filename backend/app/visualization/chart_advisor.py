@@ -22,7 +22,7 @@ import re
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    import pandas as pd
+    pass
 
 # ── Regex patterns for date/time column name heuristics ───────────────────────
 _DATE_NAME_RE = re.compile(
@@ -59,7 +59,7 @@ def _is_datetime_col(series) -> bool:
         # Try parsing a sample
         sample = series.dropna().head(5)
         try:
-            pd.to_datetime(sample, infer_datetime_format=True)
+            pd.to_datetime(sample, format="mixed")
             return True
         except Exception:
             return False

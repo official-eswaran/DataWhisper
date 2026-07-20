@@ -1,148 +1,647 @@
-import sqlite3
+"""Persistence layer (SQLAlchemy Core — runs on SQLite or Postgres).
+
+Multi-tenant model:
+    organizations 1──* users
+    organizations 1──* sessions   (uploaded datasets)
+    organizations 1──* audit_logs
+Every user, session, and audit row is scoped to an ``org_id``. Authorization
+checks require both ownership/role AND matching org, so tenants are isolated.
+
+The metadata store is chosen by ``settings.database_url``:
+* SQLite file (default) for dev/single-node,
+* Postgres for production multi-node HA.
+
+DuckDB still holds each uploaded dataset (one file per session); those are
+independent of this metadata DB.
+"""
+from __future__ import annotations
+
+import hashlib
+import re
+import secrets
+from datetime import UTC, datetime, timedelta
+
 import duckdb
-from pathlib import Path
+from sqlalchemy import (
+    Boolean,
+    Column,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    MetaData,
+    String,
+    Table,
+    Text,
+    create_engine,
+    delete,
+    func,
+    insert,
+    select,
+    update,
+)
+from sqlalchemy.engine import Engine
+from sqlalchemy.exc import IntegrityError
 
 from app.core.config import settings
 
-AUDIT_DB_PATH = settings.DATABASE_DIR / "audit.db"
+metadata = MetaData()
+
+organizations = Table(
+    "organizations", metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("name", String(120), nullable=False),
+    Column("slug", String(140), nullable=False, unique=True),
+    Column("is_active", Boolean, nullable=False, default=True),
+    Column("created_at", DateTime(timezone=True), server_default=func.now()),
+)
+
+users = Table(
+    "users", metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("org_id", Integer, ForeignKey("organizations.id"), nullable=False),
+    Column("username", String(50), nullable=False, unique=True),
+    Column("email", String(255), nullable=False, unique=True),
+    Column("password_hash", String(255), nullable=False),
+    Column("role", String(20), nullable=False, default="member"),  # owner|admin|member
+    Column("is_active", Boolean, nullable=False, default=True),
+    Column("failed_attempts", Integer, nullable=False, default=0),
+    Column("locked_until", DateTime(timezone=True)),
+    Column("last_login", DateTime(timezone=True)),
+    Column("created_at", DateTime(timezone=True), server_default=func.now()),
+)
+
+sessions = Table(
+    "sessions", metadata,
+    Column("session_id", String(36), primary_key=True),
+    Column("org_id", Integer, ForeignKey("organizations.id"), nullable=False),
+    Column("owner_username", String(50), nullable=False),
+    Column("table_name", String(255), nullable=False),
+    Column("row_count", Integer, nullable=False, default=0),
+    Column("created_at", DateTime(timezone=True), server_default=func.now()),
+)
+
+audit_logs = Table(
+    "audit_logs", metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("org_id", Integer, ForeignKey("organizations.id"), nullable=False),
+    Column("username", String(50), nullable=False, default=""),
+    Column("session_id", String(36)),
+    Column("natural_query", Text, nullable=False),
+    Column("generated_sql", Text),
+    Column("result_summary", Text),
+    Column("status", String(20), default="success"),
+    Column("created_at", DateTime(timezone=True), server_default=func.now()),
+    # ── Tamper-evidence (hash chain, per organization) ────────────────────────
+    Column("event_ts", String(32), nullable=False, default=""),   # hashed timestamp
+    Column("prev_hash", String(64), nullable=False, default=""),
+    Column("entry_hash", String(64), nullable=False, default=""),
+)
+
+# Per-org head of the audit hash chain. Locked on write to serialize appends.
+audit_chain_state = Table(
+    "audit_chain_state", metadata,
+    Column("org_id", Integer, primary_key=True),
+    Column("last_hash", String(64), nullable=False),
+    Column("updated_at", DateTime(timezone=True), server_default=func.now()),
+)
+
+refresh_tokens = Table(
+    "refresh_tokens", metadata,
+    Column("jti", String(64), primary_key=True),
+    Column("username", String(50), nullable=False),
+    Column("org_id", Integer, nullable=False),
+    Column("expires_at", DateTime(timezone=True), nullable=False),
+    Column("revoked", Boolean, nullable=False, default=False),
+    Column("created_at", DateTime(timezone=True), server_default=func.now()),
+)
+
+# Performance indexes for the hot query paths.
+Index("ix_users_org", users.c.org_id)
+Index("ix_sessions_org", sessions.c.org_id)
+Index("ix_sessions_created", sessions.c.created_at)
+Index("ix_audit_org_created", audit_logs.c.org_id, audit_logs.c.created_at)
+Index("ix_audit_session", audit_logs.c.session_id)
+Index("ix_refresh_user", refresh_tokens.c.username)
+Index("ix_refresh_expires", refresh_tokens.c.expires_at)
+
+VALID_ROLES = {"owner", "admin", "member"}
+ADMIN_ROLES = {"owner", "admin"}
+
+# ── Audit hash chain ──────────────────────────────────────────────────────────
+GENESIS_HASH = "0" * 64
 
 
-# ── Audit + Users (SQLite) ────────────────────────────────────────────────────
-
-def init_audit_db():
-    """Create audit_logs and users tables, seed default accounts on first run."""
-    settings.DATABASE_DIR.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(AUDIT_DB_PATH))
-
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS audit_logs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT NOT NULL DEFAULT '',
-            session_id TEXT,
-            natural_query TEXT NOT NULL,
-            generated_sql TEXT,
-            result_summary TEXT,
-            status TEXT DEFAULT 'success',
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-
-    # ── Schema migrations (safe to run repeatedly) ────────────────────────────
-    existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(audit_logs)").fetchall()}
-    if "username" not in existing_cols:
-        conn.execute("ALTER TABLE audit_logs ADD COLUMN username TEXT NOT NULL DEFAULT ''")
-    if "session_id" not in existing_cols:
-        conn.execute("ALTER TABLE audit_logs ADD COLUMN session_id TEXT")
-    # Rename legacy user_id → username by copying data (SQLite can't rename cols in old versions)
-    if "user_id" in existing_cols and "username" in existing_cols:
-        conn.execute("UPDATE audit_logs SET username = user_id WHERE username = ''")
-    # ──────────────────────────────────────────────────────────────────────────
-
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT UNIQUE NOT NULL,
-            password_hash TEXT NOT NULL,
-            role TEXT NOT NULL DEFAULT 'department',
-            is_active INTEGER NOT NULL DEFAULT 1,
-            failed_attempts INTEGER NOT NULL DEFAULT 0,
-            locked_until TIMESTAMP,
-            last_login TIMESTAMP,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-
-    conn.commit()
-
-    # Seed default users only if the table is empty
-    count = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
-    if count == 0:
-        _seed_default_users(conn)
-
-    conn.close()
+def _audit_entry_hash(
+    prev_hash: str, org_id: int, username: str, session_id: str | None,
+    natural_query: str, generated_sql: str, result_summary: str, status: str, event_ts: str,
+) -> str:
+    """Deterministic hash linking each audit entry to the previous one. Any edit,
+    reorder, insertion, or deletion breaks the chain and is detectable."""
+    payload = "\x1f".join([
+        prev_hash, str(org_id), username or "", session_id or "",
+        natural_query or "", generated_sql or "", result_summary or "", status or "", event_ts,
+    ])
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
-def _seed_default_users(conn: sqlite3.Connection):
-    """Insert hashed default accounts — import here to avoid circular deps."""
-    from app.core.security import hash_password  # local import avoids circular
+# ── Engine ────────────────────────────────────────────────────────────────────
 
-    users = [
-        ("ceo",     hash_password(settings.ADMIN_PASSWORD),   "admin"),
-        ("manager", hash_password(settings.MANAGER_PASSWORD), "department"),
-    ]
-    conn.executemany(
-        "INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)",
-        users,
+_engine: Engine | None = None
+
+
+def get_engine() -> Engine:
+    global _engine
+    if _engine is None:
+        url = settings.database_url
+        if url.startswith("sqlite"):
+            settings.DATABASE_DIR.mkdir(parents=True, exist_ok=True)
+            _engine = create_engine(
+                url,
+                connect_args={"check_same_thread": False},
+                pool_pre_ping=True,
+            )
+            _enable_sqlite_pragmas(_engine)
+        else:
+            _engine = create_engine(url, pool_pre_ping=True, pool_size=10, max_overflow=20)
+    return _engine
+
+
+def _enable_sqlite_pragmas(engine: Engine) -> None:
+    from sqlalchemy import event
+
+    @event.listens_for(engine, "connect")
+    def _set_pragmas(dbapi_conn, _record):
+        cur = dbapi_conn.cursor()
+        cur.execute("PRAGMA journal_mode=WAL")
+        cur.execute("PRAGMA foreign_keys=ON")
+        cur.execute("PRAGMA busy_timeout=30000")
+        cur.close()
+
+
+def _now() -> datetime:
+    return datetime.now(UTC)
+
+
+def ping_db() -> bool:
+    with get_engine().connect() as conn:
+        return conn.execute(select(1)).scalar() == 1
+
+
+# ── Schema init + seed ────────────────────────────────────────────────────────
+
+def init_db() -> None:
+    """Create tables (idempotent) and seed the demo org on an empty database.
+
+    In production, Alembic (`alembic upgrade head`) is the source of truth for
+    schema changes; ``create_all`` here is a safe no-op once tables exist.
+    """
+    engine = get_engine()
+    metadata.create_all(engine)
+    with engine.begin() as conn:
+        has_users = conn.execute(select(func.count()).select_from(users)).scalar()
+        if not has_users:
+            _seed_demo_org(conn)
+
+
+def _seed_demo_org(conn) -> None:
+    from app.core.security import hash_password
+
+    org_id = conn.execute(
+        insert(organizations).values(name="Demo Organization", slug="demo")
+    ).inserted_primary_key[0]
+    conn.execute(insert(audit_chain_state).values(org_id=org_id, last_hash=GENESIS_HASH))
+    conn.execute(
+        insert(users),
+        [
+            {
+                "org_id": org_id, "username": "ceo", "email": "ceo@demo.local",
+                "password_hash": hash_password(settings.ADMIN_PASSWORD), "role": "owner",
+            },
+            {
+                "org_id": org_id, "username": "manager", "email": "manager@demo.local",
+                "password_hash": hash_password(settings.MANAGER_PASSWORD), "role": "member",
+            },
+        ],
     )
-    conn.commit()
 
 
-def get_audit_db() -> sqlite3.Connection:
-    return sqlite3.connect(str(AUDIT_DB_PATH))
+# ── Organizations + users ─────────────────────────────────────────────────────
+
+def _slugify(name: str) -> str:
+    base = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-") or "org"
+    return f"{base}-{secrets.token_hex(3)}"
 
 
-# ── User helpers ──────────────────────────────────────────────────────────────
+def create_organization_with_owner(
+    org_name: str, username: str, email: str, password_hash: str
+) -> dict:
+    """Self-service signup: create an org and its first (owner) user atomically.
+
+    Raises ValueError('conflict') if the username or email already exists.
+    """
+    with get_engine().begin() as conn:
+        try:
+            org_id = conn.execute(
+                insert(organizations).values(name=org_name.strip()[:120], slug=_slugify(org_name))
+            ).inserted_primary_key[0]
+            conn.execute(insert(audit_chain_state).values(org_id=org_id, last_hash=GENESIS_HASH))
+            conn.execute(
+                insert(users).values(
+                    org_id=org_id, username=username, email=email,
+                    password_hash=password_hash, role="owner",
+                )
+            )
+        except IntegrityError:
+            raise ValueError("conflict")
+    return {"org_id": org_id, "username": username, "role": "owner"}
+
+
+def create_user_in_org(
+    org_id: int, username: str, email: str, password_hash: str, role: str
+) -> None:
+    if role not in {"admin", "member"}:
+        raise ValueError("invalid_role")
+    with get_engine().begin() as conn:
+        try:
+            conn.execute(
+                insert(users).values(
+                    org_id=org_id, username=username, email=email,
+                    password_hash=password_hash, role=role,
+                )
+            )
+        except IntegrityError:
+            raise ValueError("conflict")
+
+
+def list_org_users(org_id: int) -> list[dict]:
+    with get_engine().connect() as conn:
+        rows = conn.execute(
+            select(
+                users.c.username, users.c.email, users.c.role,
+                users.c.is_active, users.c.last_login, users.c.created_at,
+            ).where(users.c.org_id == org_id).order_by(users.c.created_at)
+        ).all()
+    return [
+        {
+            "username": r.username, "email": r.email, "role": r.role,
+            "is_active": bool(r.is_active),
+            "last_login": r.last_login.isoformat() if r.last_login else None,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+        }
+        for r in rows
+    ]
+
+
+def set_user_active(org_id: int, username: str, active: bool) -> bool:
+    with get_engine().begin() as conn:
+        result = conn.execute(
+            update(users)
+            .where(users.c.org_id == org_id, users.c.username == username)
+            .values(is_active=active)
+        )
+        return result.rowcount > 0
+
 
 def get_user_by_username(username: str) -> dict | None:
-    conn = get_audit_db()
-    row = conn.execute(
-        "SELECT username, password_hash, role, is_active, failed_attempts, locked_until "
-        "FROM users WHERE username = ?",
-        (username,),
-    ).fetchone()
-    conn.close()
+    with get_engine().connect() as conn:
+        row = conn.execute(
+            select(
+                users.c.username, users.c.password_hash, users.c.role,
+                users.c.is_active, users.c.failed_attempts, users.c.locked_until,
+                users.c.org_id, users.c.email,
+            ).where(users.c.username == username)
+        ).first()
     if not row:
         return None
     return {
-        "username":       row[0],
-        "password_hash":  row[1],
-        "role":           row[2],
-        "is_active":      bool(row[3]),
-        "failed_attempts": row[4],
-        "locked_until":   row[5],
+        "username": row.username,
+        "password_hash": row.password_hash,
+        "role": row.role,
+        "is_active": bool(row.is_active),
+        "failed_attempts": row.failed_attempts,
+        "locked_until": row.locked_until,
+        "org_id": row.org_id,
+        "email": row.email,
     }
 
 
-def record_failed_login(username: str):
-    conn = get_audit_db()
-    conn.execute(
-        "UPDATE users SET failed_attempts = failed_attempts + 1 WHERE username = ?",
-        (username,),
-    )
-    # Lock the account if threshold reached
-    conn.execute(
-        """UPDATE users
-           SET locked_until = datetime('now', ? || ' minutes')
-           WHERE username = ? AND failed_attempts >= ?""",
-        (str(settings.LOCKOUT_MINUTES), username, settings.MAX_LOGIN_ATTEMPTS),
-    )
-    conn.commit()
-    conn.close()
+def record_failed_login(username: str) -> None:
+    with get_engine().begin() as conn:
+        conn.execute(
+            update(users).where(users.c.username == username)
+            .values(failed_attempts=users.c.failed_attempts + 1)
+        )
+        row = conn.execute(
+            select(users.c.failed_attempts).where(users.c.username == username)
+        ).first()
+        if row and row.failed_attempts >= settings.MAX_LOGIN_ATTEMPTS:
+            conn.execute(
+                update(users).where(users.c.username == username)
+                .values(locked_until=_now() + timedelta(minutes=settings.LOCKOUT_MINUTES))
+            )
 
 
-def record_successful_login(username: str):
-    conn = get_audit_db()
-    conn.execute(
-        "UPDATE users SET failed_attempts = 0, locked_until = NULL, "
-        "last_login = CURRENT_TIMESTAMP WHERE username = ?",
-        (username,),
-    )
-    conn.commit()
-    conn.close()
+def record_successful_login(username: str) -> None:
+    with get_engine().begin() as conn:
+        conn.execute(
+            update(users).where(users.c.username == username)
+            .values(failed_attempts=0, locked_until=None, last_login=_now())
+        )
+
+
+# ── Refresh tokens ────────────────────────────────────────────────────────────
+
+def store_refresh_token(jti: str, username: str, org_id: int, expires_at: datetime) -> None:
+    with get_engine().begin() as conn:
+        conn.execute(insert(refresh_tokens).values(
+            jti=jti, username=username, org_id=org_id, expires_at=expires_at,
+        ))
+
+
+def is_refresh_token_valid(jti: str) -> bool:
+    with get_engine().connect() as conn:
+        row = conn.execute(
+            select(refresh_tokens.c.revoked, refresh_tokens.c.expires_at)
+            .where(refresh_tokens.c.jti == jti)
+        ).first()
+    if not row:
+        return False
+    expires_at = row.expires_at
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=UTC)
+    return (not row.revoked) and expires_at > _now()
+
+
+def revoke_refresh_token(jti: str) -> None:
+    with get_engine().begin() as conn:
+        conn.execute(update(refresh_tokens).where(refresh_tokens.c.jti == jti).values(revoked=True))
+
+
+def revoke_all_user_tokens(username: str) -> None:
+    with get_engine().begin() as conn:
+        conn.execute(
+            update(refresh_tokens).where(refresh_tokens.c.username == username).values(revoked=True)
+        )
+
+
+def purge_expired_refresh_tokens() -> None:
+    with get_engine().begin() as conn:
+        conn.execute(delete(refresh_tokens).where(refresh_tokens.c.expires_at < _now()))
+
+
+# ── Session ownership (tenant-scoped) ─────────────────────────────────────────
+
+def register_session(session_id: str, owner: str, org_id: int, table_name: str, row_count: int) -> None:
+    with get_engine().begin() as conn:
+        conn.execute(delete(sessions).where(sessions.c.session_id == session_id))
+        conn.execute(insert(sessions).values(
+            session_id=session_id, org_id=org_id, owner_username=owner,
+            table_name=table_name, row_count=row_count,
+        ))
+
+
+def get_session(session_id: str) -> dict | None:
+    with get_engine().connect() as conn:
+        row = conn.execute(
+            select(sessions.c.owner_username, sessions.c.org_id)
+            .where(sessions.c.session_id == session_id)
+        ).first()
+    return {"owner": row.owner_username, "org_id": row.org_id} if row else None
+
+
+def user_can_access_session(session_id: str, username: str, role: str, org_id: int) -> bool:
+    sess = get_session(session_id)
+    if sess is None:
+        return False
+    if sess["org_id"] != org_id:      # tenant isolation — never cross orgs
+        return False
+    return sess["owner"] == username or role in ADMIN_ROLES
+
+
+# ── Audit log (tenant-scoped) ─────────────────────────────────────────────────
+
+def write_audit_log(
+    username: str, org_id: int, session_id: str, natural_query: str,
+    generated_sql: str | None, result_summary: str, status: str,
+) -> None:
+    """Append a tamper-evident audit entry. The per-org chain-state row is locked
+    (FOR UPDATE on Postgres; single-writer serialization on SQLite) so concurrent
+    appends cannot fork the chain."""
+    generated_sql = generated_sql or ""
+    event_ts = _now().strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    with get_engine().begin() as conn:
+        state = conn.execute(
+            select(audit_chain_state.c.last_hash)
+            .where(audit_chain_state.c.org_id == org_id)
+            .with_for_update()
+        ).first()
+        prev_hash = state.last_hash if state else GENESIS_HASH
+
+        entry_hash = _audit_entry_hash(
+            prev_hash, org_id, username, session_id, natural_query,
+            generated_sql, result_summary, status, event_ts,
+        )
+        conn.execute(insert(audit_logs).values(
+            org_id=org_id, username=username, session_id=session_id,
+            natural_query=natural_query, generated_sql=generated_sql,
+            result_summary=result_summary, status=status,
+            event_ts=event_ts, prev_hash=prev_hash, entry_hash=entry_hash,
+        ))
+        if state:
+            conn.execute(
+                update(audit_chain_state).where(audit_chain_state.c.org_id == org_id)
+                .values(last_hash=entry_hash, updated_at=_now())
+            )
+        else:
+            conn.execute(insert(audit_chain_state).values(org_id=org_id, last_hash=entry_hash))
+
+
+def verify_audit_chain(org_id: int) -> dict:
+    """Recompute the org's audit hash chain and report integrity."""
+    with get_engine().connect() as conn:
+        rows = conn.execute(
+            select(audit_logs).where(audit_logs.c.org_id == org_id).order_by(audit_logs.c.id.asc())
+        ).all()
+        head = conn.execute(
+            select(audit_chain_state.c.last_hash).where(audit_chain_state.c.org_id == org_id)
+        ).scalar()
+
+    prev = GENESIS_HASH
+    for r in rows:
+        expected = _audit_entry_hash(
+            prev, r.org_id, r.username, r.session_id, r.natural_query,
+            r.generated_sql, r.result_summary, r.status, r.event_ts,
+        )
+        if r.prev_hash != prev or r.entry_hash != expected:
+            return {"valid": False, "entries": len(rows), "broken_at": r.id}
+        prev = r.entry_hash
+
+    head_ok = (head is None and not rows) or (head == prev)
+    return {"valid": head_ok, "entries": len(rows), "broken_at": None if head_ok else "head"}
+
+
+def fetch_audit_logs(org_id: int, limit: int, offset: int) -> tuple[list[dict], int]:
+    with get_engine().connect() as conn:
+        rows = conn.execute(
+            select(audit_logs).where(audit_logs.c.org_id == org_id)
+            .order_by(audit_logs.c.created_at.desc()).limit(limit).offset(offset)
+        ).all()
+        total = conn.execute(
+            select(func.count()).select_from(audit_logs).where(audit_logs.c.org_id == org_id)
+        ).scalar()
+    items = [
+        {
+            "id": r.id, "username": r.username, "session_id": r.session_id,
+            "question": r.natural_query, "sql": r.generated_sql,
+            "summary": r.result_summary, "status": r.status,
+            "timestamp": r.created_at.isoformat() if r.created_at else None,
+            "entry_hash": r.entry_hash,
+        }
+        for r in rows
+    ]
+    return items, total
+
+
+def fetch_session_logs(session_id: str, org_id: int) -> list[tuple]:
+    with get_engine().connect() as conn:
+        rows = conn.execute(
+            select(
+                audit_logs.c.natural_query, audit_logs.c.generated_sql,
+                audit_logs.c.result_summary, audit_logs.c.created_at,
+            ).where(audit_logs.c.session_id == session_id, audit_logs.c.org_id == org_id)
+            .order_by(audit_logs.c.created_at.asc())
+        ).all()
+    return [tuple(r) for r in rows]
+
+
+# ── GDPR / data lifecycle ─────────────────────────────────────────────────────
+
+def count_owners(org_id: int) -> int:
+    with get_engine().connect() as conn:
+        return conn.execute(
+            select(func.count()).select_from(users)
+            .where(users.c.org_id == org_id, users.c.role == "owner", users.c.is_active.is_(True))
+        ).scalar()
+
+
+def _org_session_ids(conn, org_id: int, owner: str | None = None) -> list[str]:
+    stmt = select(sessions.c.session_id).where(sessions.c.org_id == org_id)
+    if owner is not None:
+        stmt = stmt.where(sessions.c.owner_username == owner)
+    return [row[0] for row in conn.execute(stmt).all()]
+
+
+def export_user_data(org_id: int, username: str) -> dict:
+    """GDPR Article 15 — return everything the system holds about this user."""
+    with get_engine().connect() as conn:
+        profile = conn.execute(
+            select(users.c.username, users.c.email, users.c.role,
+                   users.c.is_active, users.c.last_login, users.c.created_at)
+            .where(users.c.org_id == org_id, users.c.username == username)
+        ).first()
+        user_sessions = conn.execute(
+            select(sessions.c.session_id, sessions.c.table_name,
+                   sessions.c.row_count, sessions.c.created_at)
+            .where(sessions.c.org_id == org_id, sessions.c.owner_username == username)
+        ).all()
+        activity = conn.execute(
+            select(audit_logs.c.natural_query, audit_logs.c.generated_sql,
+                   audit_logs.c.result_summary, audit_logs.c.status, audit_logs.c.created_at)
+            .where(audit_logs.c.org_id == org_id, audit_logs.c.username == username)
+            .order_by(audit_logs.c.id.asc())
+        ).all()
+
+    def _iso(v):
+        return v.isoformat() if v else None
+
+    return {
+        "profile": {
+            "username": profile.username, "email": profile.email, "role": profile.role,
+            "is_active": bool(profile.is_active),
+            "last_login": _iso(profile.last_login), "created_at": _iso(profile.created_at),
+        } if profile else None,
+        "datasets": [
+            {"session_id": s.session_id, "table_name": s.table_name,
+             "row_count": s.row_count, "created_at": _iso(s.created_at)}
+            for s in user_sessions
+        ],
+        "activity": [
+            {"question": a.natural_query, "sql": a.generated_sql, "summary": a.result_summary,
+             "status": a.status, "timestamp": _iso(a.created_at)}
+            for a in activity
+        ],
+    }
+
+
+def delete_user_account(org_id: int, username: str) -> int:
+    """GDPR Article 17 — erase the user's account and uploaded datasets.
+
+    Audit-log rows are retained for security/legal-obligation reasons and to keep
+    the tamper-evident chain intact; the username there is a pseudonymous handle.
+    Returns the number of datasets deleted.
+    """
+    with get_engine().begin() as conn:
+        session_ids = _org_session_ids(conn, org_id, owner=username)
+    for sid in session_ids:
+        delete_session_data(sid)  # removes DuckDB file + upload + sessions row
+    with get_engine().begin() as conn:
+        conn.execute(delete(refresh_tokens).where(refresh_tokens.c.username == username))
+        conn.execute(delete(users).where(users.c.org_id == org_id, users.c.username == username))
+    return len(session_ids)
+
+
+def delete_organization(org_id: int) -> dict:
+    """Erase an entire organization and all its data (owner-initiated)."""
+    with get_engine().begin() as conn:
+        session_ids = _org_session_ids(conn, org_id)
+    for sid in session_ids:
+        delete_session_data(sid)
+    with get_engine().begin() as conn:
+        users_deleted = conn.execute(
+            select(func.count()).select_from(users).where(users.c.org_id == org_id)
+        ).scalar()
+        conn.execute(delete(audit_logs).where(audit_logs.c.org_id == org_id))
+        conn.execute(delete(audit_chain_state).where(audit_chain_state.c.org_id == org_id))
+        conn.execute(delete(refresh_tokens).where(refresh_tokens.c.org_id == org_id))
+        conn.execute(delete(users).where(users.c.org_id == org_id))
+        conn.execute(delete(organizations).where(organizations.c.id == org_id))
+    return {"datasets_deleted": len(session_ids), "users_deleted": users_deleted}
+
+
+def delete_session_data(session_id: str) -> None:
+    db_path = settings.DATABASE_DIR / f"{session_id}.duckdb"
+    db_path.unlink(missing_ok=True)
+    if settings.UPLOAD_DIR.exists():
+        for f in settings.UPLOAD_DIR.glob(f"{session_id}.*"):
+            f.unlink(missing_ok=True)
+    with get_engine().begin() as conn:
+        conn.execute(delete(sessions).where(sessions.c.session_id == session_id))
+
+
+def cleanup_stale_sessions() -> int:
+    cutoff = _now() - timedelta(hours=settings.SESSION_TTL_HOURS)
+    with get_engine().connect() as conn:
+        stale = conn.execute(
+            select(sessions.c.session_id).where(sessions.c.created_at < cutoff)
+        ).all()
+    for (sid,) in stale:
+        delete_session_data(sid)
+    return len(stale)
 
 
 # ── DuckDB (per-session data) ─────────────────────────────────────────────────
 
-def get_user_duckdb(session_id: str):
-    """Create or connect to a user's DuckDB instance (used during upload)."""
+def get_user_duckdb(session_id: str) -> duckdb.DuckDBPyConnection:
     settings.DATABASE_DIR.mkdir(parents=True, exist_ok=True)
     db_path = settings.DATABASE_DIR / f"{session_id}.duckdb"
     return duckdb.connect(str(db_path))
 
 
-def require_user_duckdb(session_id: str):
-    """Connect to an existing user DuckDB — raises 404-friendly error if session missing."""
+def require_user_duckdb(session_id: str) -> duckdb.DuckDBPyConnection:
     db_path = settings.DATABASE_DIR / f"{session_id}.duckdb"
     if not db_path.exists():
         raise FileNotFoundError(f"Session '{session_id}' not found. Please upload data first.")
-    return duckdb.connect(str(db_path))
+    conn = duckdb.connect(str(db_path))
+    conn.execute("SET enable_external_access=false")
+    return conn

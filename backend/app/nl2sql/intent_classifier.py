@@ -1,6 +1,5 @@
 from app.nl2sql.llm_client import call_local_llm
 
-
 # ── Prompt injection / jailbreak patterns ─────────────────────────────────────
 # Checked FIRST — before any data signal. Any match → off_topic immediately.
 INJECTION_PATTERNS = [

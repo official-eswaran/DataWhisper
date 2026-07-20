@@ -1,8 +1,11 @@
+"""Audit-log endpoint — admin only, paginated, scoped to the caller's org."""
+from __future__ import annotations
+
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 
-from app.core.database import get_audit_db
+from app.core.database import fetch_audit_logs, verify_audit_chain
 from app.core.security import require_admin
 
 router = APIRouter()
@@ -10,28 +13,15 @@ router = APIRouter()
 
 @router.get("/logs")
 def get_audit_logs(
-    limit: int = 50,
-    _admin: Annotated[dict, Depends(require_admin)] = None,
+    admin: Annotated[dict, Depends(require_admin)],
+    limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0),
 ):
-    """Retrieve recent audit logs — admin only."""
-    conn = get_audit_db()
-    rows = conn.execute(
-        "SELECT id, username, session_id, natural_query, generated_sql, result_summary, status, created_at "
-        "FROM audit_logs ORDER BY created_at DESC LIMIT ?",
-        (limit,),
-    ).fetchall()
-    conn.close()
+    items, total = fetch_audit_logs(org_id=admin.get("org_id", -1), limit=limit, offset=offset)
+    return {"items": items, "total": total, "limit": limit, "offset": offset}
 
-    return [
-        {
-            "id":        r[0],
-            "username":  r[1],
-            "session_id": r[2],
-            "question":  r[3],
-            "sql":       r[4],
-            "summary":   r[5],
-            "status":    r[6],
-            "timestamp": r[7],
-        }
-        for r in rows
-    ]
+
+@router.get("/verify")
+def verify_audit_integrity(admin: Annotated[dict, Depends(require_admin)]):
+    """Recompute the organization's audit hash chain and report tampering."""
+    return verify_audit_chain(org_id=admin.get("org_id", -1))
