@@ -80,6 +80,15 @@ class Settings(BaseSettings):
     LOG_JSON: bool = False          # structured JSON logs (for shipping to Loki/ELK)
     METRICS_ENABLED: bool = True    # expose Prometheus /metrics
 
+    # Error tracking + tracing — both are no-ops unless configured, so local/dev
+    # and tests are unaffected.
+    SENTRY_DSN: str = ""
+    SENTRY_ENVIRONMENT: str = ""
+    SENTRY_TRACES_SAMPLE_RATE: float = 0.0
+    # OTLP/HTTP collector base URL, e.g. http://otel-collector:4318 (Tempo/Jaeger).
+    OTEL_EXPORTER_OTLP_ENDPOINT: str = ""
+    OTEL_SERVICE_NAME: str = "datawhisper-backend"
+
     # ── LLM reliability ─────────────────────────────────────────────────────────
     LLM_RETRY_ATTEMPTS: int = 2                 # total attempts per call
     LLM_RETRY_BACKOFF_SECONDS: float = 0.5      # base backoff (exponential)

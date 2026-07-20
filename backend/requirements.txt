@@ -20,3 +20,8 @@ bcrypt==5.0.0
 slowapi==0.1.9
 prometheus-client==0.21.0
 redis==5.0.8
+sentry-sdk[fastapi]==2.7.1
+opentelemetry-sdk==1.42.1
+opentelemetry-exporter-otlp-proto-http==1.42.1
+opentelemetry-instrumentation-fastapi==0.63b1
+opentelemetry-instrumentation-requests==0.63b1

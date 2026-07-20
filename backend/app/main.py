@@ -22,11 +22,21 @@ from app.core.database import (
     purge_expired_refresh_tokens,
 )
 from app.core.health import readiness
-from app.core.observability import metrics_response, record_request, setup_logging
+from app.core.observability import (
+    metrics_response,
+    record_request,
+    request_id_var,
+    setup_logging,
+)
 from app.core.ratelimit import limiter
+from app.core.telemetry import init_sentry, init_tracing
 
 setup_logging(debug=settings.DEBUG, json_logs=settings.LOG_JSON)
 logger = logging.getLogger("datawhisper")
+
+# Error tracking is initialised as early as possible; both calls are no-ops
+# unless their env vars are set.
+init_sentry()
 
 _CLEANUP_INTERVAL_SECONDS = 3600
 
@@ -62,6 +72,9 @@ app = FastAPI(
     redoc_url="/redoc" if settings.DEBUG else None,
     lifespan=lifespan,
 )
+
+# Distributed tracing (no-op unless OTEL_EXPORTER_OTLP_ENDPOINT is set).
+init_tracing(app)
 
 # ── Rate limiting ─────────────────────────────────────────────────────────────
 app.state.limiter = limiter
@@ -113,28 +126,32 @@ async def add_security_headers(request: Request, call_next):
 @app.middleware("http")
 async def log_and_measure(request: Request, call_next):
     request_id = uuid.uuid4().hex[:12]
+    token = request_id_var.set(request_id)
     start = time.perf_counter()
-    response = await call_next(request)
-    duration = time.perf_counter() - start
-    response.headers["X-Request-ID"] = request_id
+    try:
+        response = await call_next(request)
+        duration = time.perf_counter() - start
+        response.headers["X-Request-ID"] = request_id
 
-    # Use the matched route template (not the raw URL) to bound metric cardinality.
-    route = request.scope.get("route")
-    path_label = getattr(route, "path", request.url.path)
+        # Matched route template (not the raw URL) to bound metric cardinality.
+        route = request.scope.get("route")
+        path_label = getattr(route, "path", request.url.path)
 
-    if settings.METRICS_ENABLED and path_label != "/metrics":
-        record_request(request.method, path_label, response.status_code, duration)
+        if settings.METRICS_ENABLED and path_label != "/metrics":
+            record_request(request.method, path_label, response.status_code, duration)
 
-    logger.info(
-        "%s %s — %d (%.0fms) — %s — rid=%s",
-        request.method,
-        request.url.path,
-        response.status_code,
-        duration * 1000,
-        request.client.host if request.client else "unknown",
-        request_id,
-    )
-    return response
+        logger.info(
+            "%s %s — %d (%.0fms) — %s — rid=%s",
+            request.method,
+            request.url.path,
+            response.status_code,
+            duration * 1000,
+            request.client.host if request.client else "unknown",
+            request_id,
+        )
+        return response
+    finally:
+        request_id_var.reset(token)
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
