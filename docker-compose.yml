@@ -1,0 +1,84 @@
+# DataWhisper — full local stack (Ollama + backend + frontend).
+#
+# First run:
+#   1. cp backend/.env.example backend/.env  and set a real SECRET_KEY
+#   2. docker compose up -d
+#   3. docker compose exec ollama ollama pull llama3.2:3b
+#   4. open http://localhost:8080
+
+services:
+  ollama:
+    image: ollama/ollama:latest
+    volumes:
+      - ollama_models:/root/.ollama
+    ports:
+      - "11434:11434"
+    healthcheck:
+      test: ["CMD", "sh", "-c", "ollama list || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: datawhisper
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me-in-prod}
+      POSTGRES_DB: datawhisper
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U datawhisper"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  backend:
+    build: ./backend
+    env_file:
+      - ./backend/.env
+    environment:
+      # Reach Ollama + Redis + Postgres by service name inside the compose network.
+      OLLAMA_BASE_URL: http://ollama:11434
+      REDIS_URL: redis://redis:6379/0
+      DATABASE_URL: postgresql+psycopg://datawhisper:${POSTGRES_PASSWORD:-change-me-in-prod}@postgres:5432/datawhisper
+      DATABASE_DIR: /app/data/databases
+      UPLOAD_DIR: /app/data/uploads
+    volumes:
+      - backend_data:/app/data
+    depends_on:
+      ollama:
+        condition: service_started
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    expose:
+      - "8000"
+
+  frontend:
+    build:
+      context: ./frontend
+    ports:
+      - "8080:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  ollama_models:
+  backend_data:
+  postgres_data:

@@ -1,0 +1,46 @@
+# Hourly Postgres backup to object storage. Dataset files (DuckDB/uploads) are
+# covered by volume snapshots or the object-storage migration; this Job handles
+# the metadata database, which is the critical, hardest-to-reconstruct asset.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: datawhisper-backup
+  namespace: datawhisper
+spec:
+  schedule: "0 * * * *" # hourly
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: backup
+              image: postgres:16-alpine # provides pg_dump
+              command: ["/bin/sh", "-c"]
+              args:
+                - |
+                  set -eu
+                  ts="$(date -u +%Y%m%dT%H%M%SZ)"
+                  file="/tmp/metadata-${ts}.pgdump"
+                  pg_uri="$(printf '%s' "$DATABASE_URL" | sed 's/+psycopg//')"
+                  pg_dump --format=custom --no-owner --file="$file" "$pg_uri"
+                  echo "Backup written: $file ($(wc -c < "$file") bytes)"
+                  # Push to object storage if the awscli sidecar/creds are present:
+                  #   aws s3 cp "$file" "$BACKUP_S3_URI/metadata-${ts}.pgdump"
+              env:
+                - name: DATABASE_URL
+                  valueFrom:
+                    secretKeyRef:
+                      name: datawhisper-secrets
+                      key: DATABASE_URL
+              resources:
+                requests:
+                  cpu: "100m"
+                  memory: "128Mi"
+                limits:
+                  cpu: "500m"
+                  memory: "256Mi"

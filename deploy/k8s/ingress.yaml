@@ -1,0 +1,41 @@
+# Path-based routing: /api → backend (SSE-aware), everything else → frontend.
+# Assumes the ingress-nginx controller. Adjust annotations for your controller.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: datawhisper
+  namespace: datawhisper
+  annotations:
+    # Server-Sent Events: don't buffer, allow long-lived streaming responses.
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
+    nginx.ingress.kubernetes.io/proxy-body-size: "550m"
+    # TLS via cert-manager (adjust issuer name to your cluster).
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - data.example.com
+      secretName: datawhisper-tls
+  rules:
+    - host: data.example.com
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: backend
+                port:
+                  number: 8000
+          # NOTE: /metrics is intentionally NOT exposed publicly. Prometheus
+          # scrapes it in-cluster via the pod annotations on the backend.
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend
+                port:
+                  number: 80

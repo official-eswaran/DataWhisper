@@ -1,0 +1,36 @@
+# Runs Alembic migrations exactly once per release, BEFORE the backend rolls out.
+# Apply this and wait for completion, or wire it as a Helm/Argo pre-sync hook.
+# Keeping migrations in a single Job (not per-replica) avoids concurrent-upgrade
+# races when the backend scales to multiple replicas.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: datawhisper-migrate
+  namespace: datawhisper
+  labels:
+    app.kubernetes.io/name: datawhisper-migrate
+spec:
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: datawhisper-migrate
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: migrate
+          image: datawhisper/backend:latest # replace with your registry/tag
+          command: ["alembic", "upgrade", "head"]
+          envFrom:
+            - configMapRef:
+                name: datawhisper-config
+            - secretRef:
+                name: datawhisper-secrets
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"

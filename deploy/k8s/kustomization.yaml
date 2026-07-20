@@ -1,0 +1,18 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Apply order note: create the Secret (from your secrets manager, using
+# secret.example.yaml as a template) and run the migration Job BEFORE the
+# backend rolls out. postgres-dev.yaml is intentionally excluded — production
+# uses managed Postgres (see deploy/terraform); include it only for local
+# clusters.
+resources:
+  - namespace.yaml
+  - config.yaml
+  - migration-job.yaml
+  - backend.yaml
+  - frontend.yaml
+  - ingress.yaml
+  - redis.yaml
+  - ollama.yaml
+  - backup-cronjob.yaml
