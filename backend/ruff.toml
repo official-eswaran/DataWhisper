@@ -1,0 +1,15 @@
+line-length = 110
+target-version = "py312"
+extend-exclude = ["migrations"]
+
+[lint]
+select = ["E", "F", "W", "I", "UP", "B"]
+ignore = [
+    "E501",  # line length handled by formatter, not enforced hard
+    "B008",  # FastAPI uses function calls (Depends/File) in argument defaults
+    "B904",  # deliberate re-raise as HTTP/Runtime error; chaining adds no value
+]
+
+[lint.per-file-ignores]
+# conftest must set environment variables before importing the app package.
+"tests/conftest.py" = ["E402"]
