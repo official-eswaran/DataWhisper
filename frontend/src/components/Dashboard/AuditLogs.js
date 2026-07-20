@@ -16,7 +16,8 @@ function AuditLogs() {
     setLoading(true);
     try {
       const res = await getAuditLogs(100);
-      setLogs(res.data);
+      // API returns a paginated envelope: { items, total, limit, offset }.
+      setLogs(Array.isArray(res.data) ? res.data : res.data.items || []);
     } catch {
       setLogs([]);
     } finally {
