@@ -18,7 +18,12 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 
 from app.core.config import settings
-from app.core.database import get_user_duckdb, register_session
+from app.core.database import (
+    discard_user_duckdb,
+    get_user_duckdb,
+    persist_user_duckdb,
+    register_session,
+)
 from app.core.ratelimit import limiter
 from app.core.security import get_current_user
 from app.core.session_store import conversation_store
@@ -106,11 +111,14 @@ async def upload_file(
             load_dataframe_to_duckdb(conn, df, table_name)
         finally:
             conn.close()
+        persist_user_duckdb(session_id)  # upload to object storage (no-op locally)
     except HTTPException:
         file_path.unlink(missing_ok=True)
+        discard_user_duckdb(session_id)
         raise
     except Exception:
         file_path.unlink(missing_ok=True)
+        discard_user_duckdb(session_id)
         logger.exception("Failed to process upload")
         raise HTTPException(400, "Could not read the uploaded file. Is it a valid, non-corrupt data file?")
 

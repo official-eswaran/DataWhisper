@@ -19,3 +19,11 @@ data:
   ALLOWED_ORIGINS: "https://data.example.com"
   DATABASE_DIR: "/app/data/databases"
   UPLOAD_DIR: "/app/data/uploads"
+  # Per-session datasets in object storage → no ReadWriteMany volume needed.
+  # Provide the bucket (Terraform outputs one) and grant the pod S3 access via
+  # an IRSA/Workload-Identity service account or AWS creds in the Secret.
+  DATASET_STORAGE_BACKEND: "s3"
+  DATASET_S3_BUCKET: "datawhisper-datasets" # replace with your bucket
+  DATASET_S3_PREFIX: "datasets/"
+  # DATASET_S3_REGION: "us-east-1"          # optional; else provider default
+  # DATASET_S3_ENDPOINT_URL: ""             # set for MinIO / GCS-compat

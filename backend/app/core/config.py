@@ -91,6 +91,16 @@ class Settings(BaseSettings):
     LLM_CACHE_TTL_SECONDS: int = 3600
     LLM_CACHE_MAX_ENTRIES: int = 5000           # in-memory cap only
 
+    # ── Dataset storage (per-session DuckDB files) ──────────────────────────────
+    # "local" keeps *.duckdb on DATABASE_DIR — needs a ReadWriteMany volume to be
+    # shared across replicas. "s3" stores them in object storage and materialises
+    # them to a local cache on demand, so replicas need no shared filesystem.
+    DATASET_STORAGE_BACKEND: str = "local"      # local | s3
+    DATASET_S3_BUCKET: str = ""
+    DATASET_S3_PREFIX: str = "datasets/"
+    DATASET_S3_ENDPOINT_URL: str = ""           # set for MinIO / GCS-compat
+    DATASET_S3_REGION: str = ""
+
     @property
     def rate_limit_storage_uri(self) -> str:
         return self.REDIS_URL or "memory://"
