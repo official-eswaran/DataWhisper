@@ -93,11 +93,13 @@ Most AI tools (ChatGPT, Gemini) require uploading sensitive business data to ext
 | Database | DuckDB (user data), SQLite (audit + users) |
 | AI/LLM | Ollama (local), Llama 3.2 3B |
 | Data Processing | Pandas |
-| Auth | JWT (PyJWT), bcrypt (password hashing) |
-| Security | Account lockout, security headers, magic-byte file validation |
+| Auth | Access + rotating refresh JWT (PyJWT), bcrypt (rounds=12) |
+| Security | Session-ownership authz, rate limiting (slowapi), config fail-fast, DuckDB external-access lockdown |
 | Streaming | Server-Sent Events (SSE) |
 | PDF Export | ReportLab |
-| HTTPS | mkcert (local trusted certificates) |
+| Deploy | Docker + docker-compose, nginx, Gunicorn/Uvicorn workers, GitHub Actions CI |
+| Testing | pytest (unit + integration), ruff, React Testing Library |
+| HTTPS | mkcert (local) / reverse-proxy TLS (production) |
 
 ---
 
@@ -152,10 +154,48 @@ DataWhisper/
 
 ## Getting Started
 
-### Prerequisites
+### Option 0 — Docker (recommended)
 
-- Python 3.10+
-- Node.js 18+
+The whole stack (Ollama + backend + frontend) runs with one command:
+
+```bash
+cp backend/.env.example backend/.env   # set a real SECRET_KEY
+docker compose up -d --build
+docker compose exec ollama ollama pull llama3.2:3b
+# open http://localhost:8080
+```
+
+The backend runs under Gunicorn/Uvicorn (not the dev `--reload` server), the
+frontend is a static production build served by nginx (which also proxies
+`/api` and streams SSE), and data persists in named volumes.
+
+> **Scaling:** the compose stack includes Redis, so the conversation store and
+> rate limiter share state across workers — `WEB_CONCURRENCY` can safely be >1
+> and the backend can run as multiple replicas. Set `REDIS_URL=""` to fall back
+> to single-worker in-process state.
+
+**Production deployment (Kubernetes):** see [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)
+— manifests in [`deploy/k8s`](deploy/k8s) (2+ replica backend, HPA 2–10, PDB,
+health-gated rollout, migration Job, ingress with SSE support) and managed
+infra (RDS/ElastiCache/S3) in [`deploy/terraform`](deploy/terraform).
+
+**Backups & disaster recovery:** [`docs/DISASTER_RECOVERY.md`](docs/DISASTER_RECOVERY.md)
+with `scripts/backup.sh` / `scripts/restore.sh` (RPO ≤ 15 min, RTO ≤ 1 hr).
+
+**Operational endpoints:**
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /health/live` | Liveness probe (process up) — for k8s `livenessProbe` |
+| `GET /health/ready` | Readiness probe (DB up; Ollama reported) — for k8s `readinessProbe`, `503` when not ready |
+| `GET /metrics` | Prometheus metrics (request rate/latency/status, LLM calls/failures) |
+
+---
+
+### Prerequisites (manual setup)
+
+- Python 3.10+ (3.12 recommended)
+- Node.js 18+ (20 recommended)
 - Ollama
 
 ### 1. Install Ollama & pull model
@@ -181,20 +221,25 @@ pip install -r requirements.txt
 
 Create a `.env` file:
 
-```env
-SECRET_KEY=your-random-secret-key-here
-ADMIN_PASSWORD=Admin@2024
-MANAGER_PASSWORD=Manager@2024
-OLLAMA_BASE_URL=http://localhost:11434
-LLM_MODEL=llama3.2:3b
-MAX_UPLOAD_SIZE_MB=500
-MAX_LOGIN_ATTEMPTS=5
-LOCKOUT_MINUTES=15
-ALLOWED_ORIGINS=*
-DEBUG=false
+```bash
+cp .env.example .env    # then edit .env
 ```
 
-> **Important:** Change `SECRET_KEY`, `ADMIN_PASSWORD`, and `MANAGER_PASSWORD` before first run.
+The full, documented list of settings lives in [`backend/.env.example`](backend/.env.example). At minimum set:
+
+```env
+DEBUG=false
+SECRET_KEY=            # REQUIRED — see command below
+ADMIN_PASSWORD=change-me-admin
+MANAGER_PASSWORD=change-me-manager
+OLLAMA_BASE_URL=http://localhost:11434
+ALLOWED_ORIGINS=https://data.yourcompany.com
+```
+
+> **The app refuses to start in production (`DEBUG=false`) if `SECRET_KEY` is
+> missing/default/weak or `ALLOWED_ORIGINS` is `*`.** This is intentional — a
+> known signing key means anyone can forge admin tokens.
+>
 > Generate a secure key with: `python3 -c "import secrets; print(secrets.token_hex(32))"`
 
 ---
@@ -249,10 +294,12 @@ mkcert localhost YOUR_LOCAL_IP 127.0.0.1
 # Creates: localhost+2.pem and localhost+2-key.pem
 ```
 
-**Step 3 — Update `frontend/src/services/api.js`:**
-```js
-// Change http to https on line 5
-const API_BASE = `https://${API_HOST}:8000/api`;
+**Step 3 — (no code edit needed)** The frontend calls the API at the same origin
+(`/api`) by default, so it inherits HTTPS automatically. For a split-origin dev
+setup, point it at the backend explicitly:
+```bash
+# frontend/.env.local
+REACT_APP_API_URL=https://YOUR_LOCAL_IP:8000/api
 ```
 
 **Step 4 — Start backend with HTTPS:**
@@ -365,13 +412,56 @@ AI:   "I can only answer questions about your uploaded data."
 
 | Method | Endpoint | Auth | Description |
 |--------|----------|------|-------------|
-| POST | `/api/auth/login` | Public | Login, returns JWT |
-| POST | `/api/upload/` | Required | Upload data file |
-| POST | `/api/query/` | Required | Ask NL question |
-| POST | `/api/query/stream` | Required | Ask with SSE streaming |
-| GET | `/api/audit/logs` | Admin only | Get audit trail |
-| GET | `/api/export/pdf/{session_id}` | Required | Export session as PDF |
+| POST | `/api/auth/register` | Public | Self-service signup — creates an organization + owner user |
+| POST | `/api/auth/login` | Public | Login, returns access + refresh token |
+| POST | `/api/auth/refresh` | Public | Exchange a refresh token for a new pair (rotates) |
+| POST | `/api/auth/logout` | Required | Revoke all of the caller's refresh tokens |
+| GET | `/api/users/` | Admin/Owner | List users in the caller's organization |
+| POST | `/api/users/` | Admin/Owner | Create a user in the organization |
+| PATCH | `/api/users/{username}/status` | Admin/Owner | Activate / deactivate an org user |
+| POST | `/api/upload/` | Required | Upload data file (bound to the uploading user) |
+| POST | `/api/query/` | Required + owner | Ask NL question |
+| POST | `/api/query/stream` | Required + owner | Ask with SSE streaming |
+| GET | `/api/audit/logs?limit=&offset=` | Admin only | Get paginated audit trail (with per-entry hash) |
+| GET | `/api/audit/verify` | Admin only | Verify the org's tamper-evident audit chain |
+| GET | `/api/export/pdf/{session_id}` | Required + owner | Export session as PDF |
+| GET | `/api/me/export` | Required | GDPR: export all of the caller's data (JSON) |
+| DELETE | `/api/me` | Required | GDPR: delete the caller's account + datasets |
+| DELETE | `/api/org` | Owner only | Delete the whole organization and all its data |
 | GET | `/health` | Public | Health check |
+
+> **Authorization:** query, stream, and export enforce session ownership — a user
+> can only access sessions they uploaded (admins can access any). Requests for
+> another user's `session_id` return `404` (no existence leak).
+
+> **Rate limits:** login/refresh, query, and upload are IP rate-limited
+> (configurable via `RATE_LIMIT_*` in `.env`).
+
+### Multi-tenancy & database
+
+DataWhisper is multi-tenant: every user, uploaded session, and audit record is
+scoped to an **organization**. Signup (`/api/auth/register`) creates a new org
+with an **owner**; owners/admins manage their org's users via `/api/users`.
+Roles are `owner` > `admin` > `member`. Cross-org access is impossible — auth
+checks require a matching `org_id`.
+
+**Compliance & integrity:**
+- **Tamper-evident audit** — each audit entry is hash-chained to the previous one
+  (per org). `GET /api/audit/verify` recomputes the chain and detects any edit,
+  reorder, insertion, or deletion.
+- **GDPR** — `GET /api/me/export` (Article 15 access) returns everything held
+  about a user; `DELETE /api/me` (Article 17 erasure) deletes their account and
+  datasets; `DELETE /api/org` erases an entire organization. Stale sessions/data
+  auto-expire after `SESSION_TTL_HOURS`.
+
+The metadata store runs on **SQLAlchemy**, so it works on **SQLite** (dev,
+default) or **Postgres** (production, via `DATABASE_URL`). Schema is managed by
+**Alembic**:
+
+```bash
+alembic upgrade head      # apply migrations (the backend container runs this on start)
+alembic revision --autogenerate -m "describe change"   # after editing models
+```
 
 ---
 
@@ -379,16 +469,20 @@ AI:   "I can only answer questions about your uploaded data."
 
 | Control | Implementation |
 |---------|---------------|
-| Password hashing | bcrypt (rounds=12) |
-| Authentication | JWT Bearer tokens (HS256) |
+| Password hashing | bcrypt (rounds=12), SHA-256 pre-hash (no 72-byte truncation) |
+| Authentication | Short-lived access JWT + revocable refresh token (rotating) |
+| Token revocation | Refresh `jti` tracked in SQLite; `/logout` revokes all |
+| Config safety | App refuses to start if `SECRET_KEY` is default/weak or CORS is `*` (production) |
 | Account lockout | 5 failed attempts → 15 min lock |
-| Route protection | FastAPI `Depends(get_current_user)` on all routes |
-| Admin-only routes | `Depends(require_admin)` on audit logs |
-| SQL injection | Only SELECT allowed, dangerous commands blocked |
-| File validation | Magic-byte check (content must match extension) |
-| Security headers | X-Content-Type-Options, X-Frame-Options, X-XSS-Protection, Referrer-Policy |
-| CORS | Configurable via `ALLOWED_ORIGINS` in `.env` |
+| Login timing | Constant-time (dummy bcrypt on unknown user) — no username enumeration |
+| Authorization | Session ownership enforced (IDOR-safe); admin-only audit logs |
+| SQL injection | SELECT-only allowlist **and** DuckDB `enable_external_access=false` — generated SQL cannot read files/URLs |
+| Rate limiting | Per-IP limits on login, query, upload (slowapi) |
+| Upload limits | Size enforced while streaming to disk (no OOM); magic-byte check |
+| Security headers | X-Content-Type-Options, X-Frame-Options, X-XSS-Protection, Referrer-Policy, CSP |
+| CORS | Explicit origins in production (`ALLOWED_ORIGINS`); `*` rejected when `DEBUG=false` |
 | Data privacy | All data stays local — no external API calls |
+| Data lifecycle | Stale sessions + uploads auto-purged after `SESSION_TTL_HOURS` |
 
 ---
 
