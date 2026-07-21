@@ -134,6 +134,10 @@ async def ask_question(
     username = current_user.get("sub", "unknown")
     org_id = current_user.get("org_id", -1)
     enforce_quota(org_id, QUERIES)  # per-tenant monthly plan limit
+    # Only "are they already over?" — a query's row cost isn't known until it has
+    # run, and refusing to return results for work already done helps nobody.
+    # Per-query overshoot is bounded by MAX_RESULT_ROWS.
+    enforce_quota(org_id, ROWS_PROCESSED)
 
     try:
         conn = require_user_duckdb(req.session_id)
@@ -171,6 +175,7 @@ async def ask_question_stream(
     username = current_user.get("sub", "unknown")
     org_id = current_user.get("org_id", -1)
     enforce_quota(org_id, QUERIES)  # 429 before opening the stream if over limit
+    enforce_quota(org_id, ROWS_PROCESSED)  # same, for the row budget
 
     async def generate():
         conn = None

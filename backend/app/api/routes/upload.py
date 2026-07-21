@@ -110,6 +110,11 @@ async def upload_file(
 
     try:
         df = parse_file(file_path)
+        # Checked here rather than up front because an upload's cost is its row
+        # count, which isn't known until the file is parsed. Raising inside this
+        # try means the HTTPException branch below discards the partial work, so
+        # a rejected upload leaves nothing behind and burns no quota.
+        enforce_quota(org_id, ROWS_PROCESSED, len(df))
         table_name = _safe_table_name(file.filename or "data")
         conn = get_user_duckdb(session_id)
         try:

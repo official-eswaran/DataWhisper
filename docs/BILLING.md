@@ -117,8 +117,8 @@ admin tab, toasts, and strips the param so a refresh doesn't replay it.
 
 ## Not implemented
 
-- **Usage-based / metered billing.** `rows_processed` is metered in
-  `usage_counters` but is not reported to Stripe and has no hard limit. Plans
-  are flat-rate subscriptions only.
+- **Usage-based / metered billing.** `rows_processed` is capped per plan, but
+  the count is never reported to Stripe as metered usage — hitting the ceiling
+  blocks work rather than adding to the bill. Plans are flat-rate only.
 - **Proration handling on plan switches** is left to Stripe's defaults.
 - **Dunning emails** — configure them in the Stripe dashboard, not here.

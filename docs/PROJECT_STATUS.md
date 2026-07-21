@@ -15,7 +15,7 @@ work is operational/business — see [GO_LIVE_CHECKLIST.md](GO_LIVE_CHECKLIST.md
 
 | Area | State |
 |------|-------|
-| Backend tests | **132 passing**, `ruff` clean |
+| Backend tests | **141 passing**, `ruff` clean |
 | Frontend | Vite build OK, **15 Vitest tests** passing, runtime `npm audit` clean |
 | Migrations | Head is `e3d9b5c1a740` (Stripe billing linkage) |
 | Open issues | **#5 only** (go-live checklist — non-code) |
@@ -39,7 +39,7 @@ work is operational/business — see [GO_LIVE_CHECKLIST.md](GO_LIVE_CHECKLIST.md
 ```bash
 # Backend (from backend/)
 export SECRET_KEY=$(python3 -c 'import secrets;print(secrets.token_hex(32))') DEBUG=true
-python3 -m pytest                       # expect 132 passed
+python3 -m pytest                       # expect 141 passed
 python3 -m ruff check app tests         # expect clean
 python3 -m pip_audit -r requirements.txt
 
@@ -69,6 +69,14 @@ Things that are easy to miss when reading the code cold:
   per-IP (burst protection). Quotas (`app/core/quota.py`) are per-org, per
   calendar month, enforced against `PLAN_LIMITS`. Quota is checked *before*
   the work and recorded *after* success, so failed requests don't burn it.
+- **`rows_processed` is checked differently from the other metrics.** Queries
+  and uploads always cost 1, so a plain "already at the limit?" check works.
+  A row cost isn't known until the work is done, so uploads re-check with the
+  real `len(df)` *after parsing but before committing* — that's why the call
+  sits inside the try block, where the existing cleanup can discard it.
+  Queries only get the cheap check, because refusing to return results for a
+  query that already ran helps nobody; per-query overshoot is bounded by
+  `MAX_RESULT_ROWS`.
 - **Sentry and OTel are strictly opt-in.** Both are complete no-ops unless
   `SENTRY_DSN` / `OTEL_EXPORTER_OTLP_ENDPOINT` are set, so dev and tests are
   unaffected. Don't "fix" them appearing inactive locally.
@@ -99,9 +107,10 @@ None are blocking, but they're the honest loose ends:
 - **The billing UI has never seen a real Stripe redirect.** `BillingCard` is
   unit-tested with the API mocked, but no browser has actually made the round
   trip to Stripe and back.
-- **`rows_processed` is metered but not enforced.** Only `queries` and
-  `uploads` have hard limits in `PLAN_LIMITS`, and nothing is reported to
-  Stripe as metered usage.
+- **The `rows_processed` ceilings are guesses.** 1M/month on free and 50M on
+  pro were picked without usage data — revisit once real tenants exist.
+  Nothing is reported to Stripe as metered usage; the cap blocks work rather
+  than adding to the bill.
 
 ---
 

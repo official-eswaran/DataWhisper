@@ -119,6 +119,104 @@ def test_upload_blocked_when_over_quota(client, monkeypatch):
     assert r.status_code == 429
 
 
+# ── rows_processed enforcement ─────────────────────────────────────────────
+
+def test_amount_aware_check_rejects_oversized_request(monkeypatch):
+    """A single job larger than the whole remaining budget is refused up front."""
+    org_id = _new_org()
+    monkeypatch.setitem(quota.PLAN_LIMITS["free"], quota.ROWS_PROCESSED, 100)
+
+    quota.enforce_quota(org_id, quota.ROWS_PROCESSED, 100)   # exactly fits
+    with pytest.raises(HTTPException) as exc:
+        quota.enforce_quota(org_id, quota.ROWS_PROCESSED, 101)
+    assert exc.value.status_code == 429
+    assert "101" in exc.value.detail
+
+
+def test_amount_aware_check_accounts_for_prior_usage(monkeypatch):
+    org_id = _new_org()
+    monkeypatch.setitem(quota.PLAN_LIMITS["free"], quota.ROWS_PROCESSED, 100)
+    quota.record(org_id, quota.ROWS_PROCESSED, 60)
+
+    quota.enforce_quota(org_id, quota.ROWS_PROCESSED, 40)    # 60 + 40 == limit
+    with pytest.raises(HTTPException):
+        quota.enforce_quota(org_id, quota.ROWS_PROCESSED, 41)
+
+
+def test_default_amount_preserves_at_limit_semantics(monkeypatch):
+    """amount=1 must behave exactly as the old used >= limit check did."""
+    org_id = _new_org()
+    monkeypatch.setitem(quota.PLAN_LIMITS["free"], quota.QUERIES, 3)
+    quota.record(org_id, quota.QUERIES, 2)
+    quota.enforce_quota(org_id, quota.QUERIES)               # 2 < 3 — allowed
+    quota.record(org_id, quota.QUERIES, 1)
+    with pytest.raises(HTTPException):
+        quota.enforce_quota(org_id, quota.QUERIES)           # 3 >= 3 — blocked
+
+
+def test_rows_unlimited_on_enterprise(monkeypatch):
+    org_id = _new_org()
+    from app.core.database import set_org_plan
+
+    set_org_plan(org_id, "enterprise")
+    quota.enforce_quota(org_id, quota.ROWS_PROCESSED, 10_000_000_000)
+
+
+def test_upload_rejected_when_it_would_blow_the_row_budget(client, monkeypatch):
+    """The 2-row CSV is refused when only 1 row of budget remains."""
+    tok = _register(client, "rowcap", "rowcapowner").json()["access_token"]
+    monkeypatch.setitem(quota.PLAN_LIMITS["free"], quota.ROWS_PROCESSED, 1)
+
+    files = {"file": ("sales.csv", io.BytesIO(CSV), "text/csv")}
+    r = client.post("/api/upload/", headers=_auth(tok), files=files)
+    assert r.status_code == 429
+    assert "rows_processed" in r.json()["detail"]
+
+
+def test_rejected_upload_consumes_no_quota(client, monkeypatch):
+    """A refused upload must leave uploads and rows untouched, not half-counted."""
+    tok = _register(client, "rowcap2", "rowcapowner2").json()["access_token"]
+    monkeypatch.setitem(quota.PLAN_LIMITS["free"], quota.ROWS_PROCESSED, 1)
+
+    files = {"file": ("sales.csv", io.BytesIO(CSV), "text/csv")}
+    assert client.post("/api/upload/", headers=_auth(tok), files=files).status_code == 429
+
+    body = client.get("/api/usage/", headers=_auth(tok)).json()
+    assert body["metrics"]["uploads"]["used"] == 0
+    assert body["metrics"]["rows_processed"]["used"] == 0
+
+
+def test_rejected_upload_leaves_no_session_behind(client, monkeypatch):
+    """Cleanup must run — a rejected upload shouldn't leave a queryable session."""
+    tok = _register(client, "rowcap3", "rowcapowner3").json()["access_token"]
+    monkeypatch.setitem(quota.PLAN_LIMITS["free"], quota.ROWS_PROCESSED, 1)
+
+    files = {"file": ("sales.csv", io.BytesIO(CSV), "text/csv")}
+    r = client.post("/api/upload/", headers=_auth(tok), files=files)
+    assert r.status_code == 429
+    assert "session_id" not in r.json()
+
+
+def test_query_blocked_once_row_budget_is_spent(client, monkeypatch):
+    tok = _register(client, "rowq", "rowqowner").json()["access_token"]
+    sid = _upload(client, tok)  # uploads while the budget is still generous
+
+    # Now spend the row budget and confirm querying stops.
+    monkeypatch.setitem(quota.PLAN_LIMITS["free"], quota.ROWS_PROCESSED, 1)
+    r = client.post("/api/query/", headers=_auth(tok),
+                    json={"session_id": sid, "question": "total revenue?"})
+    assert r.status_code == 429
+
+
+def test_usage_summary_reports_the_row_limit():
+    """rows_processed used to report limit=None; it's a real ceiling now."""
+    org_id = _new_org()
+    summary = quota.usage_summary(org_id)
+    rows = summary["metrics"][quota.ROWS_PROCESSED]
+    assert rows["limit"] == quota.PLAN_LIMITS["free"][quota.ROWS_PROCESSED]
+    assert rows["remaining"] == rows["limit"]
+
+
 def test_owner_can_change_plan(client):
     tok = _register(client, "planorg", "planowner").json()["access_token"]
     r = client.put("/api/usage/plan", headers=_auth(tok), json={"plan": "pro"})

@@ -20,12 +20,15 @@ QUERIES = "queries"
 UPLOADS = "uploads"
 ROWS_PROCESSED = "rows_processed"
 
-# Per-plan monthly limits. -1 means unlimited. rows_processed/storage are
-# metered for visibility but not hard-enforced by default.
+# Per-plan monthly limits. -1 means unlimited.
+#
+# rows_processed is the closest thing here to a compute cost — a 5M-row upload
+# is far more expensive than 5M single-row queries — so it carries its own
+# ceiling rather than being implied by the query/upload counts.
 PLAN_LIMITS: dict[str, dict[str, int]] = {
-    "free": {QUERIES: 1_000, UPLOADS: 100},
-    "pro": {QUERIES: 50_000, UPLOADS: 5_000},
-    "enterprise": {QUERIES: -1, UPLOADS: -1},
+    "free": {QUERIES: 1_000, UPLOADS: 100, ROWS_PROCESSED: 1_000_000},
+    "pro": {QUERIES: 50_000, UPLOADS: 5_000, ROWS_PROCESSED: 50_000_000},
+    "enterprise": {QUERIES: -1, UPLOADS: -1, ROWS_PROCESSED: -1},
 }
 
 UNLIMITED = -1
@@ -40,18 +43,31 @@ def plan_limits(plan: str) -> dict[str, int]:
     return PLAN_LIMITS.get(plan, PLAN_LIMITS["free"])
 
 
-def enforce_quota(org_id: int, metric: str) -> None:
-    """Raise 429 if the org has reached its plan limit for ``metric`` this period."""
+def enforce_quota(org_id: int, metric: str, amount: int = 1) -> None:
+    """Raise 429 if consuming ``amount`` of ``metric`` would exceed the plan limit.
+
+    ``amount`` defaults to 1, where this reduces to "has the org already hit the
+    limit" — the check for countable actions like queries and uploads. Pass a
+    real amount for metrics whose cost isn't known until the work is done
+    (rows_processed), so a single large job can't blow through the whole month's
+    budget in one request.
+    """
     plan = get_org_plan(org_id)
     limit = plan_limits(plan).get(metric, UNLIMITED)
     if limit == UNLIMITED:
         return
     used = get_usage(org_id, current_period()).get(metric, 0)
-    if used >= limit:
+    if used + amount > limit:
+        detail = (
+            f"Monthly {metric} limit reached for the '{plan}' plan ({limit:,})."
+            if used >= limit
+            else f"This request needs {amount:,} {metric} but only "
+            f"{max(limit - used, 0):,} of the '{plan}' plan's {limit:,} remain "
+            "this period."
+        )
         raise HTTPException(
             status.HTTP_429_TOO_MANY_REQUESTS,
-            f"Monthly {metric} limit reached for the '{plan}' plan "
-            f"({limit}). Upgrade your plan or wait for the next period.",
+            f"{detail} Upgrade your plan or wait for the next period.",
         )
 
 
