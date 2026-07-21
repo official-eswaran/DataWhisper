@@ -217,6 +217,32 @@ def test_usage_summary_reports_the_row_limit():
     assert rows["remaining"] == rows["limit"]
 
 
+# ── Limits must stay consistent with the upload size cap ───────────────────
+
+def test_shipped_limits_absorb_a_max_size_upload():
+    """The default plan ceilings must not reject a single largest-allowed file."""
+    assert quota.check_limits_are_reachable() == []
+
+
+def test_warns_when_a_row_ceiling_cannot_fit_one_upload(monkeypatch):
+    monkeypatch.setitem(quota.PLAN_LIMITS["free"], quota.ROWS_PROCESSED, 1_000)
+    warnings = quota.check_limits_are_reachable()
+    assert any("free" in w for w in warnings)
+
+
+def test_unlimited_plans_are_never_flagged(monkeypatch):
+    monkeypatch.setattr(quota.settings, "MAX_UPLOAD_SIZE_MB", 100_000)
+    warnings = quota.check_limits_are_reachable()
+    assert not any("enterprise" in w for w in warnings)
+
+
+def test_raising_the_upload_cap_flags_the_drift(monkeypatch):
+    """The scenario the check exists for: someone bumps the size cap alone."""
+    assert quota.check_limits_are_reachable() == []
+    monkeypatch.setattr(quota.settings, "MAX_UPLOAD_SIZE_MB", 5_000)
+    assert quota.check_limits_are_reachable() != []
+
+
 def test_owner_can_change_plan(client):
     tok = _register(client, "planorg", "planowner").json()["access_token"]
     r = client.put("/api/usage/plan", headers=_auth(tok), json={"plan": "pro"})

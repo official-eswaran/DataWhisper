@@ -38,6 +38,7 @@ from app.core.observability import (
     request_id_var,
     setup_logging,
 )
+from app.core.quota import check_limits_are_reachable
 from app.core.ratelimit import limiter
 from app.core.telemetry import init_sentry, init_tracing
 
@@ -66,6 +67,7 @@ async def _cleanup_loop():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    check_limits_are_reachable()  # warns if a plan's row cap rejects big uploads
     logger.info("DataWhisper started — model: %s", settings.LLM_MODEL)
     task = asyncio.create_task(_cleanup_loop())
     try:

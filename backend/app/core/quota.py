@@ -9,11 +9,15 @@ the work and ``record`` after it succeeds, so failed requests don't burn quota.
 """
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 
 from fastapi import HTTPException, status
 
+from app.core.config import settings
 from app.core.database import get_org_plan, get_usage, record_usage
+
+logger = logging.getLogger("datawhisper.quota")
 
 # Metric names (also the usage_counters.metric values).
 QUERIES = "queries"
@@ -25,13 +29,46 @@ ROWS_PROCESSED = "rows_processed"
 # rows_processed is the closest thing here to a compute cost — a 5M-row upload
 # is far more expensive than 5M single-row queries — so it carries its own
 # ceiling rather than being implied by the query/upload counts.
+#
+# The free row ceiling must stay comfortably above the row count of a single
+# MAX_UPLOAD_SIZE_MB file, or a new user's first large upload is rejected
+# outright and the product is unusable on free. ``check_limits_are_reachable``
+# warns at startup if that stops being true.
 PLAN_LIMITS: dict[str, dict[str, int]] = {
-    "free": {QUERIES: 1_000, UPLOADS: 100, ROWS_PROCESSED: 1_000_000},
+    "free": {QUERIES: 1_000, UPLOADS: 100, ROWS_PROCESSED: 10_000_000},
     "pro": {QUERIES: 50_000, UPLOADS: 5_000, ROWS_PROCESSED: 50_000_000},
     "enterprise": {QUERIES: -1, UPLOADS: -1, ROWS_PROCESSED: -1},
 }
 
+# Rough bytes-per-row for a typical CSV, used only to sanity-check the limits
+# against each other at startup. Deliberately conservative: underestimating
+# row size overestimates the row count, so the check errs toward warning.
+_EST_BYTES_PER_ROW = 100
+
 UNLIMITED = -1
+
+
+def check_limits_are_reachable() -> list[str]:
+    """Warn if a plan's row ceiling can't absorb one maximum-size upload.
+
+    These two settings live in different files and are tuned by different
+    people at different times, so it is easy to raise MAX_UPLOAD_SIZE_MB (or
+    lower a row ceiling) and leave a plan where every large upload 429s after
+    being parsed. Returns the warnings so tests can assert on them.
+    """
+    est_rows = (settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024) // _EST_BYTES_PER_ROW
+    warnings: list[str] = []
+    for plan, limits in PLAN_LIMITS.items():
+        limit = limits.get(ROWS_PROCESSED, UNLIMITED)
+        if limit != UNLIMITED and limit < est_rows:
+            warnings.append(
+                f"Plan '{plan}' allows {limit:,} rows/month but a single "
+                f"{settings.MAX_UPLOAD_SIZE_MB} MB upload is roughly "
+                f"{est_rows:,} rows — large uploads will be rejected."
+            )
+    for warning in warnings:
+        logger.warning("quota: %s", warning)
+    return warnings
 
 
 def current_period(now: datetime | None = None) -> str:

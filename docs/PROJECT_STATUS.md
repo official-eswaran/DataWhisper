@@ -15,7 +15,7 @@ work is operational/business — see [GO_LIVE_CHECKLIST.md](GO_LIVE_CHECKLIST.md
 
 | Area | State |
 |------|-------|
-| Backend tests | **141 passing**, `ruff` clean |
+| Backend tests | **145 passing**, `ruff` clean |
 | Frontend | Vite build OK, **15 Vitest tests** passing, runtime `npm audit` clean |
 | Migrations | Head is `e3d9b5c1a740` (Stripe billing linkage) |
 | Open issues | **#5 only** (go-live checklist — non-code) |
@@ -39,7 +39,7 @@ work is operational/business — see [GO_LIVE_CHECKLIST.md](GO_LIVE_CHECKLIST.md
 ```bash
 # Backend (from backend/)
 export SECRET_KEY=$(python3 -c 'import secrets;print(secrets.token_hex(32))') DEBUG=true
-python3 -m pytest                       # expect 141 passed
+python3 -m pytest                       # expect 145 passed
 python3 -m ruff check app tests         # expect clean
 python3 -m pip_audit -r requirements.txt
 
@@ -77,6 +77,11 @@ Things that are easy to miss when reading the code cold:
   Queries only get the cheap check, because refusing to return results for a
   query that already ran helps nobody; per-query overshoot is bounded by
   `MAX_RESULT_ROWS`.
+- **A plan's row ceiling and `MAX_UPLOAD_SIZE_MB` are coupled.** If the ceiling
+  is below the row count of one maximum-size upload, every large upload 429s
+  *after* being parsed and the plan is effectively unusable. They live in
+  different files, so `check_limits_are_reachable()` warns at startup when they
+  drift. If you raise `MAX_UPLOAD_SIZE_MB`, check the logs.
 - **Sentry and OTel are strictly opt-in.** Both are complete no-ops unless
   `SENTRY_DSN` / `OTEL_EXPORTER_OTLP_ENDPOINT` are set, so dev and tests are
   unaffected. Don't "fix" them appearing inactive locally.
@@ -107,10 +112,13 @@ None are blocking, but they're the honest loose ends:
 - **The billing UI has never seen a real Stripe redirect.** `BillingCard` is
   unit-tested with the API mocked, but no browser has actually made the round
   trip to Stripe and back.
-- **The `rows_processed` ceilings are guesses.** 1M/month on free and 50M on
+- **The `rows_processed` ceilings are guesses.** 10M/month on free and 50M on
   pro were picked without usage data — revisit once real tenants exist.
   Nothing is reported to Stripe as metered usage; the cap blocks work rather
   than adding to the bill.
+- **The bytes-per-row estimate is crude.** `check_limits_are_reachable` assumes
+  ~100 bytes/row to compare the row ceilings against `MAX_UPLOAD_SIZE_MB`.
+  Wide tables are much heavier, so the check is a drift alarm, not a guarantee.
 
 ---
 
