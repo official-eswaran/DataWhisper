@@ -2,10 +2,11 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <link rel="icon" href="%PUBLIC_URL%/favicon.ico" />
+    <link rel="icon" href="/favicon.ico" />
 
-    <!-- Mobile-ready viewport -->
-    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+    <!-- Mobile-ready viewport. Note: no maximum-scale / user-scalable=no — that
+         blocks pinch-zoom and fails WCAG 1.4.4 (Resize Text). -->
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
 
     <!-- PWA / theme -->
     <meta name="theme-color" content="#0f1117" />
@@ -16,13 +17,14 @@
 
     <meta name="description" content="DataWhisper — Private AI Data Assistant. Query your data with plain English. 100% offline." />
 
-    <link rel="apple-touch-icon" href="%PUBLIC_URL%/logo192.png" />
-    <link rel="manifest" href="%PUBLIC_URL%/manifest.json" />
+    <link rel="apple-touch-icon" href="/logo192.png" />
+    <link rel="manifest" href="/manifest.json" />
 
     <title>DataWhisper</title>
   </head>
   <body>
     <noscript>You need to enable JavaScript to run this app.</noscript>
     <div id="root"></div>
+    <script type="module" src="/src/index.jsx"></script>
   </body>
 </html>

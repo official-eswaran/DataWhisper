@@ -3,9 +3,9 @@ import axios from "axios";
 // API base URL resolution:
 //  - Same-origin "/api" by default (works behind the nginx reverse proxy in
 //    production and avoids the previous hardcoded-https mixed-content bug).
-//  - Override with REACT_APP_API_URL for split-origin/dev setups, e.g.
-//    REACT_APP_API_URL=http://localhost:8000/api
-const API_BASE = process.env.REACT_APP_API_URL || "/api";
+//  - Override with VITE_API_URL for split-origin/dev setups, e.g.
+//    VITE_API_URL=http://localhost:8000/api
+const API_BASE = import.meta.env.VITE_API_URL || "/api";
 
 // ── Token storage ─────────────────────────────────────────────────────────────
 const tokens = {
@@ -186,6 +186,36 @@ export const getAuditLogs = (limit = 50, offset = 0) =>
 
 export const exportPdf = (sessionId) =>
   API.get(`/export/pdf/${sessionId}`, { responseType: "blob" });
+
+// ── Onboarding / signup ─────────────────────────────────────────────────────
+export const register = (orgName, username, email, password) =>
+  API.post("/auth/register", {
+    org_name: orgName,
+    username,
+    email,
+    password,
+  });
+
+// ── Admin console: org user management (owner/admin) ────────────────────────
+export const listUsers = () => API.get("/users/");
+
+export const createUser = (username, email, password, role = "member") =>
+  API.post("/users/", { username, email, password, role });
+
+export const setUserActive = (username, isActive) =>
+  API.patch(`/users/${username}/status`, { is_active: isActive });
+
+// ── Usage & plan (owner/admin) ──────────────────────────────────────────────
+export const getUsage = () => API.get("/usage/");
+
+export const changePlan = (plan) => API.put("/usage/plan", { plan });
+
+// ── Account / GDPR (self-service) ───────────────────────────────────────────
+export const exportMyData = () => API.get("/me/export");
+
+export const deleteMyAccount = () => API.delete("/me");
+
+export const deleteMyOrganization = () => API.delete("/org");
 
 export { tokens };
 export default API;

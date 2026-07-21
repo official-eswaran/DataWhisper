@@ -3,11 +3,16 @@ import Sidebar from "./Sidebar";
 import FileUpload from "../Upload/FileUpload";
 import ChatWindow from "../Chat/ChatWindow";
 import AuditLogs from "./AuditLogs";
+import AdminConsole from "./AdminConsole";
+import AccountSettings from "./AccountSettings";
 import "./Dashboard.css";
+
+const ADMIN_ROLES = ["owner", "admin"];
 
 function Dashboard({ auth, onLogout }) {
   const [activeTab, setActiveTab] = useState("chat");
   const [session, setSession] = useState(null);
+  const isAdmin = ADMIN_ROLES.includes(auth.role);
 
   const handleUploadSuccess = (data) => {
     setSession(data);
@@ -22,6 +27,7 @@ function Dashboard({ auth, onLogout }) {
         onLogout={onLogout}
         session={session}
         role={auth.role}
+        isAdmin={isAdmin}
       />
 
       <main className="dashboard-main">
@@ -51,6 +57,12 @@ function Dashboard({ auth, onLogout }) {
         )}
 
         {activeTab === "audit" && <AuditLogs />}
+
+        {activeTab === "admin" && isAdmin && <AdminConsole />}
+
+        {activeTab === "account" && (
+          <AccountSettings role={auth.role} onLogout={onLogout} />
+        )}
       </main>
     </div>
   );

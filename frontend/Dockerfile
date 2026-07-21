@@ -5,7 +5,7 @@ COPY package.json package-lock.json ./
 RUN npm ci
 COPY . .
 # API base is same-origin (/api) by default and proxied by nginx, so no build arg
-# is required. Override REACT_APP_API_URL only for split-origin deployments.
+# is required. Override VITE_API_URL only for split-origin deployments.
 RUN npm run build
 
 FROM nginx:1.27-alpine
