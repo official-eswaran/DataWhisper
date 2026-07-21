@@ -15,7 +15,7 @@ work is operational/business — see [GO_LIVE_CHECKLIST.md](GO_LIVE_CHECKLIST.md
 
 | Area | State |
 |------|-------|
-| Backend tests | **145 passing**, `ruff` clean |
+| Backend tests | **148 passing**, `ruff` clean |
 | Frontend | Vite build OK, **15 Vitest tests** passing, runtime `npm audit` clean |
 | Migrations | Head is `e3d9b5c1a740` (Stripe billing linkage) |
 | Open issues | **#5 only** (go-live checklist — non-code) |
@@ -39,7 +39,7 @@ work is operational/business — see [GO_LIVE_CHECKLIST.md](GO_LIVE_CHECKLIST.md
 ```bash
 # Backend (from backend/)
 export SECRET_KEY=$(python3 -c 'import secrets;print(secrets.token_hex(32))') DEBUG=true
-python3 -m pytest                       # expect 145 passed
+python3 -m pytest                       # expect 148 passed
 python3 -m ruff check app tests         # expect clean
 python3 -m pip_audit -r requirements.txt
 
@@ -91,6 +91,10 @@ Things that are easy to miss when reading the code cold:
   routes 503, everything else unaffected. Entitlements change *only* on a
   signature-verified webhook, never on the post-checkout redirect. The webhook
   route must keep reading the raw body — see [BILLING.md](BILLING.md).
+- **One source of truth for a plan at a time.** `PUT /api/usage/plan` is the
+  manual tier control for self-hosted (no-Stripe) deployments. Once billing is
+  enabled it returns 409 — the webhook owns `organizations.plan`, and a manual
+  override would just be reverted by the next subscription event (issue #17).
 - **Frontend JSX files use the `.jsx` extension** (required post-Vite).
   `ResultView` is lazy-loaded so Recharts stays out of the initial bundle —
   keep it that way.

@@ -7,6 +7,12 @@ Billing is **opt-in**. With `STRIPE_SECRET_KEY` unset, `/api/billing/*` returns
 503 and nothing else changes — plans stay manually settable through
 `PUT /api/usage/plan`. That is the supported configuration for self-hosting.
 
+Once billing **is** configured, Stripe becomes the single source of truth for a
+plan: the webhook rewrites `organizations.plan` on every subscription change.
+The manual `PUT /api/usage/plan` therefore returns **409** while billing is on —
+a hand-set plan would be a free upgrade that the next webhook silently reverts.
+Upgrades go through checkout, downgrades/cancellations through the portal.
+
 ---
 
 ## How entitlements flow

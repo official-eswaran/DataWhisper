@@ -269,3 +269,43 @@ def test_member_cannot_change_plan(client):
     }).json()["access_token"]
     r = client.put("/api/usage/plan", headers=_auth(mtok), json={"plan": "pro"})
     assert r.status_code == 403
+
+
+# ── Manual plan changes yield to Stripe once billing is on (issue #17) ──────
+
+def test_manual_plan_change_refused_when_billing_enabled(client, monkeypatch):
+    """With Stripe live, an owner cannot hand-set a plan — the webhook owns it."""
+    from app.core.config import settings
+
+    tok = _register(client, "billedorg", "billedowner").json()["access_token"]
+    monkeypatch.setattr(settings, "STRIPE_SECRET_KEY", "sk_test_x")
+    r = client.put("/api/usage/plan", headers=_auth(tok), json={"plan": "enterprise"})
+    assert r.status_code == 409
+    # The plan must be untouched — refusing means refusing, not silently applying.
+    assert client.get("/api/usage/", headers=_auth(tok)).json()["plan"] == "free"
+
+
+def test_role_check_precedes_billing_check(client, monkeypatch):
+    """A non-owner gets 403 whether or not billing is on — never a 409 leak that
+    would tell them the endpoint would otherwise have worked."""
+    from app.core.config import settings
+
+    owner = _register(client, "billedorg2", "billedowner2").json()["access_token"]
+    client.post("/api/users/", headers=_auth(owner), json={
+        "username": "billedmember", "email": "m@billedorg2.io",
+        "password": "Str0ngPass1", "role": "member",
+    })
+    mtok = client.post("/api/auth/login", json={
+        "username": "billedmember", "password": "Str0ngPass1",
+    }).json()["access_token"]
+    monkeypatch.setattr(settings, "STRIPE_SECRET_KEY", "sk_test_x")
+    r = client.put("/api/usage/plan", headers=_auth(mtok), json={"plan": "pro"})
+    assert r.status_code == 403
+
+
+def test_manual_plan_change_still_works_without_billing(client):
+    """The self-hosted path is unchanged: no Stripe → owner may set the tier."""
+    tok = _register(client, "selfhostorg", "selfhostowner").json()["access_token"]
+    r = client.put("/api/usage/plan", headers=_auth(tok), json={"plan": "pro"})
+    assert r.status_code == 200
+    assert r.json()["plan"] == "pro"

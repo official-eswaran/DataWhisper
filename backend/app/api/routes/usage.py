@@ -2,14 +2,20 @@
 
 Owner/admin only, scoped to the caller's organization. Exposes the current
 period's usage against plan limits (the data a billing UI or the admin console
-consumes), plus an owner-only plan change for manual tier management ahead of
-automated billing.
+consumes), plus an owner-only plan change for manual tier management.
+
+That manual change exists only for deployments **without** Stripe. Once billing
+is configured, Stripe is the single source of truth for a plan: the webhook
+writes ``organizations.plan`` on every subscription change, so a hand-set plan
+would be a free upgrade that the next webhook silently overwrites. The endpoint
+therefore refuses when ``billing_enabled`` — see issue #17.
 """
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, field_validator
 
+from app.core.config import settings
 from app.core.database import set_org_plan
 from app.core.quota import PLAN_LIMITS, usage_summary
 from app.core.security import get_current_user, require_admin
@@ -36,8 +42,20 @@ def get_usage(admin: Annotated[dict, Depends(require_admin)]):
 
 @router.put("/plan")
 def change_plan(req: PlanRequest, user: Annotated[dict, Depends(get_current_user)]):
-    """Change the org's plan. Owner-only (billing is an owner responsibility)."""
+    """Manually set the org's plan. Owner-only, and only when billing is off.
+
+    With Stripe configured, plans are changed through checkout (upgrade) and the
+    billing portal (downgrade/cancel); a manual override here would desync from
+    the subscription and be reverted by the next webhook. So we refuse rather
+    than accept a change that won't stick — see issue #17.
+    """
     if user.get("role") != "owner":
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Only the org owner can change the plan")
+    if settings.billing_enabled:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Plans are managed through Stripe on this deployment. Use checkout to "
+            "upgrade or the billing portal to change or cancel your subscription.",
+        )
     set_org_plan(user.get("org_id", -1), req.plan)
     return usage_summary(user.get("org_id", -1))
