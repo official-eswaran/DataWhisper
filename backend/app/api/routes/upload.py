@@ -24,6 +24,8 @@ from app.core.database import (
     persist_user_duckdb,
     register_session,
 )
+from app.core.quota import ROWS_PROCESSED, UPLOADS, enforce_quota
+from app.core.quota import record as quota_record
 from app.core.ratelimit import limiter
 from app.core.security import get_current_user
 from app.core.session_store import conversation_store
@@ -88,6 +90,9 @@ async def upload_file(
     file: UploadFile = File(...),
     current_user: Annotated[dict, Depends(get_current_user)] = None,
 ):
+    org_id = (current_user or {}).get("org_id", -1)
+    enforce_quota(org_id, UPLOADS)  # per-tenant monthly plan limit
+
     ext = Path(file.filename or "").suffix.lower()
     if ext not in ALLOWED_EXTENSIONS:
         raise HTTPException(400, f"Unsupported file type: {ext or 'unknown'}")
@@ -129,6 +134,8 @@ async def upload_file(
         table_name,
         len(df),
     )
+    quota_record(org_id, UPLOADS, 1)
+    quota_record(org_id, ROWS_PROCESSED, len(df))
     conversation_store.invalidate(session_id)
 
     anomalies = detect_anomalies(df, table_name)
