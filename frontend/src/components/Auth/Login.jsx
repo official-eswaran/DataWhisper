@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { Link } from "react-router-dom";
 import { login } from "../../services/api";
 import toast from "react-hot-toast";
 import { FiDatabase, FiLock, FiUser } from "react-icons/fi";
@@ -32,12 +33,16 @@ function Login({ onLogin }) {
           <p>Private AI Data Assistant</p>
         </div>
 
-        <form onSubmit={handleSubmit} className="login-form">
+        <form onSubmit={handleSubmit} className="login-form" aria-label="Sign in">
           <div className="input-group">
-            <FiUser className="input-icon" />
+            <FiUser className="input-icon" aria-hidden="true" />
+            <label htmlFor="username" className="sr-only">Username</label>
             <input
+              id="username"
+              name="username"
               type="text"
               placeholder="Username"
+              autoComplete="username"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
               required
@@ -45,23 +50,32 @@ function Login({ onLogin }) {
           </div>
 
           <div className="input-group">
-            <FiLock className="input-icon" />
+            <FiLock className="input-icon" aria-hidden="true" />
+            <label htmlFor="password" className="sr-only">Password</label>
             <input
+              id="password"
+              name="password"
               type="password"
               placeholder="Password"
+              autoComplete="current-password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
             />
           </div>
 
-          <button type="submit" className="login-btn" disabled={loading}>
+          <button type="submit" className="login-btn" disabled={loading} aria-busy={loading}>
             {loading ? "Signing in..." : "Sign In"}
           </button>
         </form>
 
         <div className="login-footer">
-          <FiLock size={12} />
+          <span>New here? </span>
+          <Link to="/signup">Create a workspace</Link>
+        </div>
+
+        <div className="login-footer">
+          <FiLock size={12} aria-hidden="true" />
           <span>100% offline — your data never leaves this machine</span>
         </div>
       </div>

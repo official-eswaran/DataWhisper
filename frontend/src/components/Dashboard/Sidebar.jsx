@@ -5,15 +5,19 @@ import {
   FiMessageSquare,
   FiFileText,
   FiLogOut,
+  FiSettings,
   FiShield,
+  FiUsers,
 } from "react-icons/fi";
 import "./Sidebar.css";
 
-function Sidebar({ activeTab, onTabChange, onLogout, session, role }) {
+function Sidebar({ activeTab, onTabChange, onLogout, session, role, isAdmin }) {
   const menuItems = [
     { id: "upload", label: "Upload Data", icon: <FiUpload /> },
     { id: "chat", label: "Ask Questions", icon: <FiMessageSquare /> },
     { id: "audit", label: "Audit Logs", icon: <FiFileText /> },
+    ...(isAdmin ? [{ id: "admin", label: "Admin", icon: <FiUsers /> }] : []),
+    { id: "account", label: "Account", icon: <FiSettings /> },
   ];
 
   return (
@@ -28,14 +32,15 @@ function Sidebar({ activeTab, onTabChange, onLogout, session, role }) {
         </div>
       </div>
 
-      <nav className="sidebar-nav">
+      <nav className="sidebar-nav" aria-label="Main">
         {menuItems.map((item) => (
           <button
             key={item.id}
             className={`sidebar-item ${activeTab === item.id ? "active" : ""}`}
             onClick={() => onTabChange(item.id)}
+            aria-current={activeTab === item.id ? "page" : undefined}
           >
-            {item.icon}
+            <span aria-hidden="true">{item.icon}</span>
             <span>{item.label}</span>
           </button>
         ))}
