@@ -22,6 +22,8 @@ from pydantic import BaseModel, field_validator
 
 from app.core.config import settings
 from app.core.database import require_user_duckdb, user_can_access_session, write_audit_log
+from app.core.quota import QUERIES, ROWS_PROCESSED, enforce_quota
+from app.core.quota import record as quota_record
 from app.core.ratelimit import limiter
 from app.core.security import get_current_user
 from app.core.session_store import conversation_store
@@ -131,6 +133,7 @@ async def ask_question(
     _authorize(req.session_id, current_user)
     username = current_user.get("sub", "unknown")
     org_id = current_user.get("org_id", -1)
+    enforce_quota(org_id, QUERIES)  # per-tenant monthly plan limit
 
     try:
         conn = require_user_duckdb(req.session_id)
@@ -146,6 +149,8 @@ async def ask_question(
 
     if result.get("type") != "error" and result.get("sql") is not None:
         conversation_store.append_turn(req.session_id, req.question, result["sql"])
+        quota_record(org_id, QUERIES, 1)
+        quota_record(org_id, ROWS_PROCESSED, int(result.get("row_count", 0)))
     write_audit_log(
         username, org_id, req.session_id, req.question,
         result.get("sql"), result.get("summary", result.get("message", "")),
@@ -165,6 +170,7 @@ async def ask_question_stream(
     _authorize(req.session_id, current_user)
     username = current_user.get("sub", "unknown")
     org_id = current_user.get("org_id", -1)
+    enforce_quota(org_id, QUERIES)  # 429 before opening the stream if over limit
 
     async def generate():
         conn = None
@@ -240,6 +246,8 @@ async def ask_question_stream(
 
             conversation_store.append_turn(req.session_id, req.question, generated_sql)
             result = build_result(result_df, req.question, generated_sql)
+            quota_record(org_id, QUERIES, 1)
+            quota_record(org_id, ROWS_PROCESSED, int(result.get("row_count", 0)))
             write_audit_log(username, org_id, req.session_id, req.question, generated_sql, result["summary"], result["type"])
             yield _sse({"stage": "done", "result": result})
 

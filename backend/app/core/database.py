@@ -23,6 +23,7 @@ from datetime import UTC, datetime, timedelta
 
 import duckdb
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     Column,
     DateTime,
@@ -52,6 +53,7 @@ organizations = Table(
     Column("id", Integer, primary_key=True, autoincrement=True),
     Column("name", String(120), nullable=False),
     Column("slug", String(140), nullable=False, unique=True),
+    Column("plan", String(20), nullable=False, default="free"),  # free|pro|enterprise
     Column("is_active", Boolean, nullable=False, default=True),
     Column("created_at", DateTime(timezone=True), server_default=func.now()),
 )
@@ -114,6 +116,17 @@ refresh_tokens = Table(
     Column("expires_at", DateTime(timezone=True), nullable=False),
     Column("revoked", Boolean, nullable=False, default=False),
     Column("created_at", DateTime(timezone=True), server_default=func.now()),
+)
+
+# Per-tenant usage metering. One row per (org, period, metric); the count is
+# upserted/incremented as usage happens. period is "YYYY-MM" (monthly buckets).
+usage_counters = Table(
+    "usage_counters", metadata,
+    Column("org_id", Integer, ForeignKey("organizations.id"), primary_key=True),
+    Column("period", String(7), primary_key=True),        # e.g. "2026-07"
+    Column("metric", String(32), primary_key=True),       # queries|uploads|rows_processed
+    Column("count", BigInteger, nullable=False, default=0),
+    Column("updated_at", DateTime(timezone=True), server_default=func.now()),
 )
 
 # Performance indexes for the hot query paths.
@@ -604,6 +617,7 @@ def delete_organization(org_id: int) -> dict:
         conn.execute(delete(audit_logs).where(audit_logs.c.org_id == org_id))
         conn.execute(delete(audit_chain_state).where(audit_chain_state.c.org_id == org_id))
         conn.execute(delete(refresh_tokens).where(refresh_tokens.c.org_id == org_id))
+        conn.execute(delete(usage_counters).where(usage_counters.c.org_id == org_id))
         conn.execute(delete(users).where(users.c.org_id == org_id))
         conn.execute(delete(organizations).where(organizations.c.id == org_id))
     return {"datasets_deleted": len(session_ids), "users_deleted": users_deleted}
@@ -645,3 +659,54 @@ def require_user_duckdb(session_id: str) -> duckdb.DuckDBPyConnection:
     conn = duckdb.connect(str(db_path))
     conn.execute("SET enable_external_access=false")
     return conn
+
+
+# ── Per-tenant plan + usage metering ──────────────────────────────────────────
+
+def get_org_plan(org_id: int) -> str:
+    with get_engine().connect() as conn:
+        plan = conn.execute(
+            select(organizations.c.plan).where(organizations.c.id == org_id)
+        ).scalar()
+    return plan or "free"
+
+
+def set_org_plan(org_id: int, plan: str) -> None:
+    with get_engine().begin() as conn:
+        conn.execute(
+            update(organizations).where(organizations.c.id == org_id).values(plan=plan)
+        )
+
+
+def record_usage(org_id: int, metric: str, period: str, amount: int = 1) -> None:
+    """Atomically add ``amount`` to an org's usage counter for the period.
+
+    Uses an INSERT … ON CONFLICT DO UPDATE upsert (supported by both SQLite and
+    Postgres) so concurrent increments across workers/replicas are safe.
+    """
+    engine = get_engine()
+    if engine.dialect.name == "postgresql":
+        from sqlalchemy.dialects.postgresql import insert as _insert
+    else:
+        from sqlalchemy.dialects.sqlite import insert as _insert
+
+    stmt = _insert(usage_counters).values(
+        org_id=org_id, period=period, metric=metric, count=amount, updated_at=_now()
+    )
+    stmt = stmt.on_conflict_do_update(
+        index_elements=["org_id", "period", "metric"],
+        set_={"count": usage_counters.c.count + amount, "updated_at": _now()},
+    )
+    with engine.begin() as conn:
+        conn.execute(stmt)
+
+
+def get_usage(org_id: int, period: str) -> dict[str, int]:
+    with get_engine().connect() as conn:
+        rows = conn.execute(
+            select(usage_counters.c.metric, usage_counters.c.count).where(
+                usage_counters.c.org_id == org_id,
+                usage_counters.c.period == period,
+            )
+        ).all()
+    return {metric: count for metric, count in rows}
