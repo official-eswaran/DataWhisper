@@ -17,6 +17,7 @@ work is operational/business — see [GO_LIVE_CHECKLIST.md](GO_LIVE_CHECKLIST.md
 |------|-------|
 | Backend tests | **148 passing**, `ruff` clean |
 | Frontend | Vite build OK, **15 Vitest tests** passing, runtime `npm audit` clean |
+| E2E | Playwright full-flow smoke (**verified locally**, not yet run in CI) — `frontend/e2e/` |
 | Migrations | Head is `e3d9b5c1a740` (Stripe billing linkage) |
 | Open issues | **#5 only** (go-live checklist — non-code) |
 
@@ -98,6 +99,12 @@ Things that are easy to miss when reading the code cold:
 - **Frontend JSX files use the `.jsx` extension** (required post-Vite).
   `ResultView` is lazy-loaded so Recharts stays out of the initial bundle —
   keep it that way.
+- **The E2E lives in `frontend/e2e/` and drives the real stack.** `npm run
+  test:e2e` starts the backend + a dedicated-port frontend and runs one browser
+  smoke through register → upload → real Ollama query → rendered result. It
+  needs Ollama running. Vitest is configured to ignore `e2e/**`; the two runners
+  don't overlap. CI job is `.github/workflows/e2e.yml` (manual/nightly, not
+  per-PR — it pulls a model). See `frontend/e2e/README.md`.
 
 ---
 
@@ -125,6 +132,9 @@ None are blocking, but they're the honest loose ends:
 - **The billing UI has never seen a real Stripe redirect.** `BillingCard` is
   unit-tested with the API mocked, but no browser has actually made the round
   trip to Stripe and back.
+- **The E2E has never run in GitHub Actions.** It passes locally against real
+  Ollama, but the CI workflow (`e2e.yml`) is unverified on a hosted runner —
+  the Ollama install/model-pull is the likely rough edge on first run.
 - **The `rows_processed` ceilings are guesses.** 10M/month on free and 50M on
   pro were picked without usage data — revisit once real tenants exist.
   Nothing is reported to Stripe as metered usage; the cap blocks work rather
