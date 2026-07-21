@@ -28,6 +28,12 @@ const uploadDur = new Trend('dw_upload_duration', true);
 const queryDur = new Trend('dw_query_duration', true);
 const bizErrors = new Rate('dw_business_errors'); // non-2xx at the app level
 const queriesRun = new Counter('dw_queries_run');
+// 429s are counted separately from real errors. A load generator hits the API
+// from ONE source IP while slowapi's limits are per-IP burst protection, so a
+// stack left on production rate limits will 429 almost everything — which looks
+// exactly like a capacity failure unless it is called out by name. See the
+// "Rate limits" section of README.md.
+const rateLimited = new Counter('dw_rate_limited');
 
 // Load the sample CSV once, shared across all VUs (kept in repo alongside this
 // script so the test is self-contained).
@@ -58,6 +64,10 @@ export const options = {
     },
   },
   thresholds: {
+    // Any 429 means the environment is throttling the generator, so the run
+    // measures the rate limiter rather than the stack. Fail loudly and by name
+    // instead of letting it read as an error-rate problem.
+    dw_rate_limited: ['count<1'],
     // Capacity SLOs — a run that breaches these exits non-zero.
     http_req_failed: ['rate<0.01'], // < 1% transport errors
     dw_business_errors: ['rate<0.01'], // < 1% app-level errors
@@ -67,6 +77,16 @@ export const options = {
   },
 };
 
+// Separates "throttled" from "broken" so a misconfigured environment doesn't
+// masquerade as a capacity result.
+function noteRateLimit(res) {
+  if (res.status === 429) {
+    rateLimited.add(1);
+    return true;
+  }
+  return false;
+}
+
 function login() {
   const res = http.post(
     `${BASE_URL}/api/auth/login`,
@@ -74,6 +94,7 @@ function login() {
     { headers: { 'Content-Type': 'application/json' }, tags: { phase: 'login' } },
   );
   loginDur.add(res.timings.duration);
+  noteRateLimit(res);
   const ok = check(res, {
     'login 200': (r) => r.status === 200,
     'login has token': (r) => !!(r.json() && r.json().access_token),
@@ -89,6 +110,7 @@ function upload(token) {
     { headers: { Authorization: `Bearer ${token}` }, tags: { phase: 'upload' } },
   );
   uploadDur.add(res.timings.duration);
+  noteRateLimit(res);
   const ok = check(res, {
     'upload 200': (r) => r.status === 200,
     'upload has session': (r) => !!(r.json() && r.json().session_id),
@@ -104,6 +126,7 @@ function query(token, sessionId, question) {
     { headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, tags: { phase: 'query' } },
   );
   queryDur.add(res.timings.duration);
+  noteRateLimit(res);
   queriesRun.add(1);
   const ok = check(res, {
     'query 200': (r) => r.status === 200,
@@ -112,29 +135,43 @@ function query(token, sessionId, question) {
   bizErrors.add(!ok);
 }
 
+// Per-VU state, initialised on the VU's first iteration and reused after that.
+// Module scope in k6 is per-VU, not global, so each VU gets its own session.
+//
+// This MUST NOT move into the default function. Logging in and uploading on
+// every iteration is what the first version did, and it made the test measure
+// the per-IP rate limiter instead of capacity: every VU shares one source IP,
+// so N VUs looping produce N×iterations logins against RATE_LIMIT_LOGIN
+// (10/minute by default) and the run drowns in 429s. It also burns a fresh
+// upload quota slot per iteration.
+let vu = null;
+
 export default function () {
-  let token;
-  let sessionId;
+  if (vu === null) {
+    let token;
+    group('login', () => {
+      token = login();
+    });
+    if (!token) {
+      sleep(THINK);
+      return; // retry the handshake on the next iteration
+    }
 
-  group('login', () => {
-    token = login();
-  });
-  if (!token) {
-    sleep(THINK);
-    return;
-  }
+    let sessionId;
+    group('upload', () => {
+      sessionId = upload(token);
+    });
+    if (!sessionId) {
+      sleep(THINK);
+      return;
+    }
 
-  group('upload', () => {
-    sessionId = upload(token);
-  });
-  if (!sessionId) {
-    sleep(THINK);
-    return;
+    vu = { token, sessionId };
   }
 
   group('query', () => {
     for (let i = 0; i < QUERIES_PER_VU; i++) {
-      query(token, sessionId, QUESTIONS[i % QUESTIONS.length]);
+      query(vu.token, vu.sessionId, QUESTIONS[i % QUESTIONS.length]);
       sleep(THINK);
     }
   });

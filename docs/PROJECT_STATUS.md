@@ -101,11 +101,20 @@ Things that are easy to miss when reading the code cold:
 
 None are blocking, but they're the honest loose ends:
 
-- **k6 thresholds are placeholders.** Query p95 = 8s was picked without real
-  hardware. Run the suite against staging and set real numbers
-  (`loadtest/README.md` has a baseline template).
-- **k6 has never been run against a live stack** from this machine — k6 wasn't
-  installed. The script is syntax-checked only.
+- **k6 thresholds are still placeholders.** Query p95 = 8s was picked without
+  real hardware and remains unvalidated. The suite has now been run end-to-end
+  (2026-07-21) but only on a dev laptop with CPU inference, which is not
+  representative — see the "Runs so far" section of `loadtest/README.md`. A
+  staging run is still the outstanding work.
+- **Load testing needs the target stack's rate limits raised.** k6 drives from
+  one IP and slowapi limits are per-IP, so a stack on production limits 429s
+  almost every query and measures the limiter instead of the app. The script
+  now fails loudly on `dw_rate_limited` when this happens.
+- **The load test measures a warm LLM cache by default.** Only 5 fixed
+  questions against one dataset, and the cache is keyed on model+prompt, so
+  after a few iterations it stops exercising the LLM at all (observed: 38.3s
+  p95 cold vs 61ms warm on the same stack). Set `LLM_CACHE_ENABLED=false` to
+  size real inference capacity, and always record which mode a baseline used.
 - **Stripe has never run against a real account.** The integration is fully
   unit-tested with stubs, but no live or test-mode checkout has been completed
   from this machine — that needs a Stripe account (go-live checklist).
