@@ -13,6 +13,10 @@ data:
   LLM_MAX_CONCURRENCY: "4"
   LOG_JSON: "true"
   METRICS_ENABLED: "true"
+  # Optional distributed tracing — point at an OTLP/HTTP collector (Tempo/Jaeger)
+  # to enable; leave unset to disable. SENTRY_DSN (error tracking) is a Secret.
+  # OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4318"
+  OTEL_SERVICE_NAME: "datawhisper-backend"
   MAX_UPLOAD_SIZE_MB: "500"
   SESSION_TTL_HOURS: "24"
   # Explicit origins in production (no "*").
