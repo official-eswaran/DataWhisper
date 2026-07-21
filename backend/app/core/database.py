@@ -57,6 +57,12 @@ organizations = Table(
     Column("plan", String(20), nullable=False, default="free"),  # free|pro|enterprise
     Column("is_active", Boolean, nullable=False, default=True),
     Column("created_at", DateTime(timezone=True), server_default=func.now()),
+    # ── Stripe billing linkage (issue #5). Empty until the org first checks out.
+    Column("stripe_customer_id", String(64), nullable=False, default=""),
+    Column("stripe_subscription_id", String(64), nullable=False, default=""),
+    # Mirrors the Stripe subscription status: active|trialing|past_due|canceled.
+    # "none" means the org has never subscribed (i.e. it is on free).
+    Column("billing_status", String(20), nullable=False, default="none"),
 )
 
 users = Table(
@@ -128,6 +134,16 @@ usage_counters = Table(
     Column("metric", String(32), primary_key=True),       # queries|uploads|rows_processed
     Column("count", BigInteger, nullable=False, default=0),
     Column("updated_at", DateTime(timezone=True), server_default=func.now()),
+)
+
+# Stripe webhook idempotency. Stripe retries deliveries until it gets a 2xx and
+# can deliver the same event more than once; we insert the event id here and
+# skip anything already recorded.
+stripe_events = Table(
+    "stripe_events", metadata,
+    Column("event_id", String(64), primary_key=True),
+    Column("event_type", String(64), nullable=False, default=""),
+    Column("received_at", DateTime(timezone=True), server_default=func.now()),
 )
 
 # Performance indexes for the hot query paths.
@@ -724,3 +740,85 @@ def get_usage(org_id: int, period: str) -> dict[str, int]:
             )
         ).all()
     return {metric: count for metric, count in rows}
+
+
+# ── Stripe billing linkage ────────────────────────────────────────────────────
+
+def get_org_name(org_id: int) -> str:
+    with get_engine().connect() as conn:
+        return conn.execute(
+            select(organizations.c.name).where(organizations.c.id == org_id)
+        ).scalar() or f"org-{org_id}"
+
+
+def get_org_billing(org_id: int) -> dict:
+    """Stripe linkage for an org. Empty strings mean "never subscribed"."""
+    with get_engine().connect() as conn:
+        row = conn.execute(
+            select(
+                organizations.c.plan,
+                organizations.c.stripe_customer_id,
+                organizations.c.stripe_subscription_id,
+                organizations.c.billing_status,
+            ).where(organizations.c.id == org_id)
+        ).first()
+    if row is None:
+        return {"plan": "free", "customer_id": "", "subscription_id": "", "status": "none"}
+    return {
+        "plan": row[0] or "free",
+        "customer_id": row[1] or "",
+        "subscription_id": row[2] or "",
+        "status": row[3] or "none",
+    }
+
+
+def set_org_billing(
+    org_id: int,
+    *,
+    plan: str | None = None,
+    customer_id: str | None = None,
+    subscription_id: str | None = None,
+    status: str | None = None,
+) -> None:
+    """Update whichever billing fields are supplied, leaving the rest alone."""
+    values = {
+        "plan": plan,
+        "stripe_customer_id": customer_id,
+        "stripe_subscription_id": subscription_id,
+        "billing_status": status,
+    }
+    values = {k: v for k, v in values.items() if v is not None}
+    if not values:
+        return
+    with get_engine().begin() as conn:
+        conn.execute(update(organizations).where(organizations.c.id == org_id).values(**values))
+
+
+def find_org_by_customer(customer_id: str) -> int | None:
+    """Reverse-lookup an org from a Stripe customer id (used by webhooks)."""
+    if not customer_id:
+        return None
+    with get_engine().connect() as conn:
+        return conn.execute(
+            select(organizations.c.id).where(
+                organizations.c.stripe_customer_id == customer_id
+            )
+        ).scalar()
+
+
+def claim_stripe_event(event_id: str, event_type: str = "") -> bool:
+    """Record a webhook event id. Returns False if it was already processed.
+
+    The primary-key insert is what makes this atomic — two concurrent replicas
+    handling the same retried delivery cannot both win.
+    """
+    if not event_id:
+        return True
+    try:
+        with get_engine().begin() as conn:
+            conn.execute(
+                insert(stripe_events).values(event_id=event_id, event_type=event_type)
+            )
+    except IntegrityError:
+        return False
+    return True

@@ -15,9 +15,9 @@ work is operational/business — see [GO_LIVE_CHECKLIST.md](GO_LIVE_CHECKLIST.md
 
 | Area | State |
 |------|-------|
-| Backend tests | **105 passing**, `ruff` clean |
+| Backend tests | **132 passing**, `ruff` clean |
 | Frontend | Vite build OK, **4 Vitest tests** passing, runtime `npm audit` clean |
-| Migrations | Head is `c7e1a2f4b9d0` (org plan + usage_counters) |
+| Migrations | Head is `e3d9b5c1a740` (Stripe billing linkage) |
 | Open issues | **#5 only** (go-live checklist — non-code) |
 
 ### What shipped (all merged to `master`)
@@ -30,6 +30,7 @@ work is operational/business — see [GO_LIVE_CHECKLIST.md](GO_LIVE_CHECKLIST.md
 | #12 | #4 | Sentry error tracking + OpenTelemetry tracing + log/trace correlation |
 | #13 | #6 | Per-tenant quotas + usage metering (`/api/usage`) |
 | #14 | #7, #8 | Frontend CRA→Vite, code-splitting, a11y, admin console + onboarding UI |
+| — | #5 (part) | Stripe billing: hosted Checkout + Portal + webhooks ([BILLING.md](BILLING.md)) |
 
 ---
 
@@ -38,7 +39,7 @@ work is operational/business — see [GO_LIVE_CHECKLIST.md](GO_LIVE_CHECKLIST.md
 ```bash
 # Backend (from backend/)
 export SECRET_KEY=$(python3 -c 'import secrets;print(secrets.token_hex(32))') DEBUG=true
-python3 -m pytest                       # expect 105 passed
+python3 -m pytest                       # expect 132 passed
 python3 -m ruff check app tests         # expect clean
 python3 -m pip_audit -r requirements.txt
 
@@ -73,6 +74,10 @@ Things that are easy to miss when reading the code cold:
   unaffected. Don't "fix" them appearing inactive locally.
 - **The audit log is a hash chain.** Editing/reordering/deleting rows breaks
   it; `/api/audit/verify` detects that. Don't write to `audit_logs` directly.
+- **Stripe is opt-in and webhook-driven.** Unset `STRIPE_SECRET_KEY` → billing
+  routes 503, everything else unaffected. Entitlements change *only* on a
+  signature-verified webhook, never on the post-checkout redirect. The webhook
+  route must keep reading the raw body — see [BILLING.md](BILLING.md).
 - **Frontend JSX files use the `.jsx` extension** (required post-Vite).
   `ResultView` is lazy-loaded so Recharts stays out of the initial bundle —
   keep it that way.
@@ -88,13 +93,14 @@ None are blocking, but they're the honest loose ends:
   (`loadtest/README.md` has a baseline template).
 - **k6 has never been run against a live stack** from this machine — k6 wasn't
   installed. The script is syntax-checked only.
-- **Plan changes are manual.** `PUT /api/usage/plan` (owner-only) exists, but
-  nothing bills. Stripe wiring is described in the go-live checklist.
+- **Stripe has never run against a real account.** The integration is fully
+  unit-tested with stubs, but no live or test-mode checkout has been completed
+  from this machine — that needs a Stripe account (go-live checklist).
+- **No billing UI yet.** The backend exposes `/api/billing/checkout` and
+  `/api/billing/portal`; the frontend has no Upgrade button wired to them.
 - **`rows_processed` is metered but not enforced.** Only `queries` and
-  `uploads` have hard limits in `PLAN_LIMITS`.
-- **`reportWebVitals.js` is dead code** left over from CRA — nothing imports it.
-- **The README's "Project Structure" section still lists `.js` filenames** for
-  frontend components that are now `.jsx`.
+  `uploads` have hard limits in `PLAN_LIMITS`, and nothing is reported to
+  Stripe as metered usage.
 
 ---
 

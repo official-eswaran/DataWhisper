@@ -14,7 +14,17 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from slowapi.errors import RateLimitExceeded
 
-from app.api.routes import audit, auth, export, gdpr, query, upload, usage, users
+from app.api.routes import (
+    audit,
+    auth,
+    billing,
+    export,
+    gdpr,
+    query,
+    upload,
+    usage,
+    users,
+)
 from app.core.config import settings
 from app.core.database import (
     cleanup_stale_sessions,
@@ -160,6 +170,7 @@ app.include_router(users.router, prefix="/api/users", tags=["User Management"])
 app.include_router(upload.router, prefix="/api/upload", tags=["Data Upload"])
 app.include_router(query.router, prefix="/api/query", tags=["NL Query"])
 app.include_router(usage.router, prefix="/api/usage", tags=["Usage & Quotas"])
+app.include_router(billing.router, prefix="/api/billing", tags=["Billing"])
 app.include_router(audit.router, prefix="/api/audit", tags=["Audit Logs"])
 app.include_router(export.router, prefix="/api/export", tags=["Export Reports"])
 app.include_router(gdpr.router, prefix="/api", tags=["Privacy / GDPR"])

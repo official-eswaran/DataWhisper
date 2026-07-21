@@ -31,3 +31,10 @@ data:
   DATASET_S3_PREFIX: "datasets/"
   # DATASET_S3_REGION: "us-east-1"          # optional; else provider default
   # DATASET_S3_ENDPOINT_URL: ""             # set for MinIO / GCS-compat
+  # Stripe billing — price IDs are not secret (they identify a product, they
+  # don't authorise anything), so they live here. The API key and webhook
+  # secret are in the Secret. Unset STRIPE_SECRET_KEY disables billing.
+  # STRIPE_PRICE_PRO: "price_REPLACE"
+  # STRIPE_PRICE_ENTERPRISE: "price_REPLACE"
+  # STRIPE_SUCCESS_URL: "https://data.example.com/billing?status=success"
+  # STRIPE_CANCEL_URL: "https://data.example.com/billing?status=cancelled"

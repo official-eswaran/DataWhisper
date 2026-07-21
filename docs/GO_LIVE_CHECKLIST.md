@@ -116,10 +116,16 @@ a checklist, not legal advice.
 - [ ] **SOC 2** — only if selling to enterprise. Pick an auditor, map controls
       (the hash-chained audit log, RBAC, and DR runbook already cover several),
       then run the observation window (Type II is typically 3–12 months)
-- [ ] **Stripe billing** — only if charging. Per-tenant quotas and usage metering
-      already exist (`/api/usage`, `usage_counters`), so wiring Stripe means:
-      map plans → `PLAN_LIMITS`, subscribe to webhooks, and call `set_org_plan`
-      on subscription change
+- [ ] **Stripe billing** — the *code* is done (hosted Checkout + Billing Portal +
+      signature-verified webhooks; see [BILLING.md](BILLING.md)). What remains is
+      account setup, and it is genuinely non-code:
+  - [ ] Create the Stripe account; complete business verification
+  - [ ] Create one recurring price per paid plan (`pro`, `enterprise`)
+  - [ ] Set `STRIPE_PRICE_*`, `STRIPE_SUCCESS_URL`, `STRIPE_CANCEL_URL` in config
+  - [ ] Put `STRIPE_SECRET_KEY` + `STRIPE_WEBHOOK_SECRET` in the Secret
+  - [ ] Register the webhook endpoint and subscribe the four subscription events
+  - [ ] **Verify:** a test-mode checkout moves the org's plan, and cancelling in
+        the portal drops it back to `free`
 
 ---
 

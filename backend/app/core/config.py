@@ -110,6 +110,30 @@ class Settings(BaseSettings):
     DATASET_S3_ENDPOINT_URL: str = ""           # set for MinIO / GCS-compat
     DATASET_S3_REGION: str = ""
 
+    # ── Stripe billing (issue #5) ───────────────────────────────────────────────
+    # Entirely opt-in: with STRIPE_SECRET_KEY unset, the billing routes return
+    # 503 and nothing else in the app changes. Plans stay manually settable via
+    # PUT /api/usage/plan, which is the pre-billing behaviour.
+    STRIPE_SECRET_KEY: str = ""
+    STRIPE_WEBHOOK_SECRET: str = ""             # whsec_… — required to accept webhooks
+    # Price ID per plan. These map both ways: checkout uses plan → price, the
+    # webhook uses price → plan to decide what a subscription entitles.
+    STRIPE_PRICE_PRO: str = ""
+    STRIPE_PRICE_ENTERPRISE: str = ""
+    # Where Stripe returns the user after hosted checkout / portal.
+    STRIPE_SUCCESS_URL: str = ""
+    STRIPE_CANCEL_URL: str = ""
+
+    @property
+    def billing_enabled(self) -> bool:
+        return bool(self.STRIPE_SECRET_KEY)
+
+    @property
+    def stripe_price_by_plan(self) -> dict[str, str]:
+        """Configured plan → price ID, skipping plans with no price set."""
+        pairs = {"pro": self.STRIPE_PRICE_PRO, "enterprise": self.STRIPE_PRICE_ENTERPRISE}
+        return {plan: price for plan, price in pairs.items() if price}
+
     @property
     def rate_limit_storage_uri(self) -> str:
         return self.REDIS_URL or "memory://"
