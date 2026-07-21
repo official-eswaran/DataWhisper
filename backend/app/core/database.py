@@ -44,6 +44,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 
 from app.core.config import settings
+from app.core.dataset_storage import dataset_storage
 
 metadata = MetaData()
 
@@ -610,8 +611,7 @@ def delete_organization(org_id: int) -> dict:
 
 
 def delete_session_data(session_id: str) -> None:
-    db_path = settings.DATABASE_DIR / f"{session_id}.duckdb"
-    db_path.unlink(missing_ok=True)
+    dataset_storage.delete(session_id)
     if settings.UPLOAD_DIR.exists():
         for f in settings.UPLOAD_DIR.glob(f"{session_id}.*"):
             f.unlink(missing_ok=True)
@@ -633,15 +633,29 @@ def cleanup_stale_sessions() -> int:
 # ── DuckDB (per-session data) ─────────────────────────────────────────────────
 
 def get_user_duckdb(session_id: str) -> duckdb.DuckDBPyConnection:
-    settings.DATABASE_DIR.mkdir(parents=True, exist_ok=True)
-    db_path = settings.DATABASE_DIR / f"{session_id}.duckdb"
+    """Open a writable connection for a fresh upload.
+
+    Call ``persist_user_duckdb`` after closing the connection so the S3 backend
+    uploads the finished file; ``discard_user_duckdb`` on failure to clean up.
+    """
+    db_path = dataset_storage.path_for_write(session_id)
     return duckdb.connect(str(db_path))
 
 
+def persist_user_duckdb(session_id: str) -> None:
+    """Persist a just-written dataset to the durable store (no-op for local)."""
+    dataset_storage.commit(session_id)
+
+
+def discard_user_duckdb(session_id: str) -> None:
+    """Remove a partially-written dataset from local cache and durable store."""
+    dataset_storage.delete(session_id)
+
+
 def require_user_duckdb(session_id: str) -> duckdb.DuckDBPyConnection:
-    db_path = settings.DATABASE_DIR / f"{session_id}.duckdb"
-    if not db_path.exists():
-        raise FileNotFoundError(f"Session '{session_id}' not found. Please upload data first.")
+    # Materialises from object storage on demand; raises FileNotFoundError if
+    # the session does not exist.
+    db_path = dataset_storage.ensure_local(session_id)
     conn = duckdb.connect(str(db_path))
     conn.execute("SET enable_external_access=false")
     return conn
