@@ -1,8 +1,24 @@
 import React, { useCallback, useEffect, useState } from "react";
 import toast from "react-hot-toast";
 import { FiUserPlus, FiUsers } from "react-icons/fi";
-import { createUser, getUsage, listUsers, setUserActive } from "../../services/api";
+import {
+  createUser,
+  getBillingStatus,
+  getUsage,
+  listUsers,
+  setUserActive,
+} from "../../services/api";
+import BillingCard from "./BillingCard";
 import "./AdminConsole.css";
+
+// Colour the bar before the wall, not at it — 80% is the nudge, 100% is the stop.
+function barState({ used, limit }) {
+  if (!limit) return "";
+  const pct = (used / limit) * 100;
+  if (pct >= 100) return " is-full";
+  if (pct >= 80) return " is-warning";
+  return "";
+}
 
 function UsageCard({ usage }) {
   if (!usage) return null;
@@ -26,7 +42,7 @@ function UsageCard({ usage }) {
             {m.limit != null && (
               <div className="usage-bar" aria-hidden="true">
                 <div
-                  className="usage-bar-fill"
+                  className={`usage-bar-fill${barState(m)}`}
                   style={{ width: `${Math.min(100, (m.used / m.limit) * 100)}%` }}
                 />
               </div>
@@ -40,17 +56,27 @@ function UsageCard({ usage }) {
 
 function AdminConsole() {
   const [usage, setUsage] = useState(null);
+  const [billing, setBilling] = useState(null);
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [form, setForm] = useState({ username: "", email: "", password: "", role: "member" });
   const [creating, setCreating] = useState(false);
+  const isOwner = localStorage.getItem("role") === "owner";
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [u, us] = await Promise.all([getUsage(), listUsers()]);
+      // Billing is settled separately: an older backend without /api/billing
+      // shouldn't take down the whole console, so a failure there just hides
+      // the card.
+      const [u, us, b] = await Promise.all([
+        getUsage(),
+        listUsers(),
+        getBillingStatus().catch(() => null),
+      ]);
       setUsage(u.data);
       setUsers(us.data.users || []);
+      setBilling(b?.data ?? null);
     } catch {
       toast.error("Could not load the admin console");
     } finally {
@@ -104,6 +130,8 @@ function AdminConsole() {
       ) : (
         <>
           <UsageCard usage={usage} />
+
+          <BillingCard billing={billing} isOwner={isOwner} onChange={load} />
 
           <section className="admin-section" aria-labelledby="team-heading">
             <h3 id="team-heading">Team members</h3>

@@ -210,6 +210,17 @@ export const getUsage = () => API.get("/usage/");
 
 export const changePlan = (plan) => API.put("/usage/plan", { plan });
 
+// ── Billing (Stripe) ────────────────────────────────────────────────────────
+// getBillingStatus reports enabled:false when the deployment has no Stripe keys
+// configured — the UI hides the upgrade actions rather than showing dead buttons.
+export const getBillingStatus = () => API.get("/billing/");
+
+// Both of these return a Stripe-hosted URL to send the browser to; no card
+// details are ever entered in this app.
+export const startCheckout = (plan) => API.post("/billing/checkout", { plan });
+
+export const openBillingPortal = () => API.post("/billing/portal");
+
 // ── Account / GDPR (self-service) ───────────────────────────────────────────
 export const exportMyData = () => API.get("/me/export");
 

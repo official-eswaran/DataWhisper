@@ -1,0 +1,73 @@
+/* Billing card. Reuses .admin-section / .btn-primary / .btn-small from
+   AdminConsole.css — only the billing-specific bits live here. */
+
+.billing-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+/* The upgrade buttons stack a label over a blurb, so they need to break out of
+   the single-line shape .btn-primary otherwise assumes. */
+.billing-actions .btn-primary {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  text-align: left;
+  line-height: 1.3;
+}
+
+.billing-blurb {
+  font-size: 0.72rem;
+  font-weight: 400;
+  opacity: 0.85;
+}
+
+.billing-actions .btn-small {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.billing-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  background: var(--bg-tertiary);
+  border-left: 3px solid var(--warning, #d97706);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 14px;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+
+.billing-warning svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: var(--warning, #d97706);
+}
+
+.billing-fineprint {
+  margin-top: 14px;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+/* Usage bars turn amber near the limit and red at it, so the upgrade prompt
+   isn't the first time someone learns they're about to be cut off. */
+.usage-bar-fill.is-warning {
+  background: var(--warning, #d97706);
+}
+
+.usage-bar-fill.is-full {
+  background: var(--danger, #dc2626);
+}
+
+@media (max-width: 600px) {
+  .billing-actions .btn-primary {
+    width: 100%;
+  }
+}

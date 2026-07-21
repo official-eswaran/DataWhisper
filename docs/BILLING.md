@@ -94,6 +94,27 @@ handler.
 - **`price → plan` is authoritative** over metadata. Metadata is only a fallback
   because it can be edited in the dashboard without changing what's charged.
 
+---
+
+## The UI
+
+`BillingCard` (admin console → Plan & billing) is the only billing surface:
+
+- It **renders nothing** when `GET /api/billing/` reports `enabled: false`, so a
+  self-hosted deployment without Stripe shows no dead upgrade buttons.
+- Upgrade actions are **owner-only** in the UI, matching the backend's 403.
+  Non-owners see a note pointing at their owner instead.
+- It offers every paid plan **except the current one**. Downgrading is a cancel
+  in the Stripe portal, not a checkout.
+- `past_due` warns that payment failed *while stating the plan is still active*,
+  because that is what the backend actually does.
+- The success redirect says the plan "will appear shortly" rather than
+  confirming the upgrade — the webhook is what changes the plan and it can lag
+  the user's return by a moment. Don't reword this into a promise.
+
+`Dashboard` reads the `?status=` marker Stripe appends, lands the user on the
+admin tab, toasts, and strips the param so a refresh doesn't replay it.
+
 ## Not implemented
 
 - **Usage-based / metered billing.** `rows_processed` is metered in

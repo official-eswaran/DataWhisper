@@ -16,7 +16,7 @@ work is operational/business — see [GO_LIVE_CHECKLIST.md](GO_LIVE_CHECKLIST.md
 | Area | State |
 |------|-------|
 | Backend tests | **132 passing**, `ruff` clean |
-| Frontend | Vite build OK, **4 Vitest tests** passing, runtime `npm audit` clean |
+| Frontend | Vite build OK, **15 Vitest tests** passing, runtime `npm audit` clean |
 | Migrations | Head is `e3d9b5c1a740` (Stripe billing linkage) |
 | Open issues | **#5 only** (go-live checklist — non-code) |
 
@@ -46,7 +46,7 @@ python3 -m pip_audit -r requirements.txt
 # Frontend (from frontend/)
 npm ci
 npm run build                           # outputs to build/
-npm test                                # expect 4 passed
+npm test                                # expect 15 passed
 npm audit --omit=dev --audit-level=high # runtime deps must be clean
 ```
 
@@ -96,8 +96,9 @@ None are blocking, but they're the honest loose ends:
 - **Stripe has never run against a real account.** The integration is fully
   unit-tested with stubs, but no live or test-mode checkout has been completed
   from this machine — that needs a Stripe account (go-live checklist).
-- **No billing UI yet.** The backend exposes `/api/billing/checkout` and
-  `/api/billing/portal`; the frontend has no Upgrade button wired to them.
+- **The billing UI has never seen a real Stripe redirect.** `BillingCard` is
+  unit-tested with the API mocked, but no browser has actually made the round
+  trip to Stripe and back.
 - **`rows_processed` is metered but not enforced.** Only `queries` and
   `uploads` have hard limits in `PLAN_LIMITS`, and nothing is reported to
   Stripe as metered usage.
