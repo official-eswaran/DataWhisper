@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { Link } from "react-router-dom";
 import { login } from "../../services/api";
 import toast from "react-hot-toast";
 import { FiDatabase, FiLock, FiUser } from "react-icons/fi";
@@ -69,7 +70,12 @@ function Login({ onLogin }) {
         </form>
 
         <div className="login-footer">
-          <FiLock size={12} />
+          <span>New here? </span>
+          <Link to="/signup">Create a workspace</Link>
+        </div>
+
+        <div className="login-footer">
+          <FiLock size={12} aria-hidden="true" />
           <span>100% offline — your data never leaves this machine</span>
         </div>
       </div>

@@ -46,3 +46,15 @@ test("unauthenticated visit renders the login screen", () => {
   expect(screen.getByLabelText(/username/i)).toBeInTheDocument();
   expect(screen.getByLabelText(/password/i)).toBeInTheDocument();
 });
+
+test("the signup route renders the onboarding form", () => {
+  localStorage.clear();
+  render(
+    <MemoryRouter initialEntries={["/signup"]}>
+      <App />
+    </MemoryRouter>
+  );
+  expect(screen.getByRole("button", { name: /create workspace/i })).toBeInTheDocument();
+  expect(screen.getByLabelText(/organization name/i)).toBeInTheDocument();
+  expect(screen.getByLabelText(/email/i)).toBeInTheDocument();
+});

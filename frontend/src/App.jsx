@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { Routes, Route, Navigate } from "react-router-dom";
 import Login from "./components/Auth/Login";
+import Signup from "./components/Auth/Signup";
 import Dashboard from "./components/Dashboard/Dashboard";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { tokens, logout as apiLogout } from "./services/api";
@@ -32,6 +33,10 @@ function App() {
           <Route
             path="/login"
             element={auth ? <Navigate to="/" /> : <Login onLogin={handleLogin} />}
+          />
+          <Route
+            path="/signup"
+            element={auth ? <Navigate to="/" /> : <Signup onLogin={handleLogin} />}
           />
           <Route
             path="/*"

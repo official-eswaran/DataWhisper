@@ -5,15 +5,19 @@ import {
   FiMessageSquare,
   FiFileText,
   FiLogOut,
+  FiSettings,
   FiShield,
+  FiUsers,
 } from "react-icons/fi";
 import "./Sidebar.css";
 
-function Sidebar({ activeTab, onTabChange, onLogout, session, role }) {
+function Sidebar({ activeTab, onTabChange, onLogout, session, role, isAdmin }) {
   const menuItems = [
     { id: "upload", label: "Upload Data", icon: <FiUpload /> },
     { id: "chat", label: "Ask Questions", icon: <FiMessageSquare /> },
     { id: "audit", label: "Audit Logs", icon: <FiFileText /> },
+    ...(isAdmin ? [{ id: "admin", label: "Admin", icon: <FiUsers /> }] : []),
+    { id: "account", label: "Account", icon: <FiSettings /> },
   ];
 
   return (
