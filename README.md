@@ -134,16 +134,18 @@ DataWhisper/
 │   ├── .env                           # Environment config (not committed)
 │   └── requirements.txt
 ├── frontend/
+│   ├── index.html                     # Vite entry point + PWA meta tags
+│   ├── vite.config.js                 # Build config (outputs to build/)
 │   ├── public/
-│   │   ├── index.html                 # PWA meta tags
 │   │   └── manifest.json              # PWA manifest (dark theme)
 │   └── src/
 │       ├── components/
-│       │   ├── Auth/Login.js           # Login page
-│       │   ├── Chat/ChatWindow.js      # Chat interface + SSE streaming
-│       │   ├── Dashboard/              # Sidebar, Dashboard, AuditLogs
-│       │   ├── Upload/FileUpload.js    # Drag-drop upload
-│       │   └── Visualization/ResultView.js  # Tables, charts, numbers
+│       │   ├── Auth/                   # Login, Signup
+│       │   ├── Chat/ChatWindow.jsx     # Chat interface + SSE streaming
+│       │   ├── Dashboard/              # Sidebar, Dashboard, AuditLogs,
+│       │   │                           #   AdminConsole, AccountSettings
+│       │   ├── Upload/FileUpload.jsx   # Drag-drop upload
+│       │   └── Visualization/ResultView.jsx  # Tables, charts (lazy-loaded)
 │       └── services/api.js             # Axios + fetch API client
 └── sample_data/
     ├── sales_data.csv
