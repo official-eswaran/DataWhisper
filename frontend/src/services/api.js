@@ -3,9 +3,9 @@ import axios from "axios";
 // API base URL resolution:
 //  - Same-origin "/api" by default (works behind the nginx reverse proxy in
 //    production and avoids the previous hardcoded-https mixed-content bug).
-//  - Override with REACT_APP_API_URL for split-origin/dev setups, e.g.
-//    REACT_APP_API_URL=http://localhost:8000/api
-const API_BASE = process.env.REACT_APP_API_URL || "/api";
+//  - Override with VITE_API_URL for split-origin/dev setups, e.g.
+//    VITE_API_URL=http://localhost:8000/api
+const API_BASE = import.meta.env.VITE_API_URL || "/api";
 
 // ── Token storage ─────────────────────────────────────────────────────────────
 const tokens = {

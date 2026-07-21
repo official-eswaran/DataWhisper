@@ -6,6 +6,25 @@
   box-sizing: border-box;
 }
 
+/* Visually-hidden but available to screen readers (form labels, etc.). */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Visible keyboard focus everywhere (WCAG 2.4.7). */
+:focus-visible {
+  outline: 2px solid var(--accent, #6366f1);
+  outline-offset: 2px;
+}
+
 :root {
   --bg-primary: #0f1117;
   --bg-secondary: #1a1b23;

@@ -299,7 +299,7 @@ mkcert localhost YOUR_LOCAL_IP 127.0.0.1
 setup, point it at the backend explicitly:
 ```bash
 # frontend/.env.local
-REACT_APP_API_URL=https://YOUR_LOCAL_IP:8000/api
+VITE_API_URL=https://YOUR_LOCAL_IP:8000/api
 ```
 
 **Step 4 — Start backend with HTTPS:**

@@ -1,9 +1,12 @@
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect, lazy, Suspense } from "react";
 import { askQuestionStream, exportPdf } from "../../services/api";
 import toast from "react-hot-toast";
 import { FiSend, FiDownload, FiCode, FiCpu, FiZap } from "react-icons/fi";
-import ResultView from "../Visualization/ResultView";
 import "./ChatWindow.css";
+
+// Recharts is heavy; load the result/chart view only when a result exists so it
+// stays out of the initial bundle (code-splitting).
+const ResultView = lazy(() => import("../Visualization/ResultView"));
 
 let _msgId = 0;
 const nextId = () => `msg-${++_msgId}`;
@@ -180,11 +183,13 @@ function ChatWindow({ session }) {
               )}
 
               {msg.data && msg.data.length > 0 && (
-                <ResultView
-                  type={msg.type}
-                  data={msg.data}
-                  columns={msg.columns}
-                />
+                <Suspense fallback={<div className="chart-loading">Loading chart…</div>}>
+                  <ResultView
+                    type={msg.type}
+                    data={msg.data}
+                    columns={msg.columns}
+                  />
+                </Suspense>
               )}
             </div>
           </div>

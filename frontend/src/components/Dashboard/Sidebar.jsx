@@ -28,14 +28,15 @@ function Sidebar({ activeTab, onTabChange, onLogout, session, role }) {
         </div>
       </div>
 
-      <nav className="sidebar-nav">
+      <nav className="sidebar-nav" aria-label="Main">
         {menuItems.map((item) => (
           <button
             key={item.id}
             className={`sidebar-item ${activeTab === item.id ? "active" : ""}`}
             onClick={() => onTabChange(item.id)}
+            aria-current={activeTab === item.id ? "page" : undefined}
           >
-            {item.icon}
+            <span aria-hidden="true">{item.icon}</span>
             <span>{item.label}</span>
           </button>
         ))}
