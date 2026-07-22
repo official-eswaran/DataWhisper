@@ -24,9 +24,23 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
 
-    # ── Default seed passwords (override via .env before first run) ─────────────
+    # ── Demo seeding ────────────────────────────────────────────────────────────
+    # On an empty database, init_db can seed a demo org (ceo/manager) with the
+    # passwords below. That is convenient for dev/test but dangerous in
+    # production: a forgotten deploy would ship known owner credentials. So
+    # seeding is gated (issue #23). None = "auto": follow DEBUG, so dev/test
+    # (DEBUG=true) seed and production (DEBUG=false) does not. Set explicitly to
+    # force either way.
+    SEED_DEMO_DATA: bool | None = None
+    # Default seed passwords (override via .env before first run). Only ever used
+    # when demo seeding is enabled.
     ADMIN_PASSWORD: str = "Admin@2024"
     MANAGER_PASSWORD: str = "Manager@2024"
+
+    @property
+    def should_seed_demo(self) -> bool:
+        """Whether to seed the demo org. Auto-off in production."""
+        return self.DEBUG if self.SEED_DEMO_DATA is None else self.SEED_DEMO_DATA
 
     # ── Account lockout ─────────────────────────────────────────────────────────
     MAX_LOGIN_ATTEMPTS: int = 5

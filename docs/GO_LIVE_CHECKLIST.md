@@ -99,7 +99,10 @@ Do **not** skip this — an untested backup is not a backup.
 
 - [ ] Confirm CI is green on `master` (pip-audit, npm audit, Trivy, coverage gate)
 - [ ] Confirm TLS terminates at the ingress and HTTP redirects to HTTPS
-- [ ] Rotate the seeded demo accounts (`ceo` / `manager`) or disable them
+- [ ] Demo accounts (`ceo` / `manager`) are **not seeded** in production —
+      seeding is auto-off when `DEBUG=false` (issue #23). Create the first org
+      via `/api/auth/register`. Only if you deliberately set `SEED_DEMO_DATA=true`
+      do these exist; then rotate their passwords immediately.
 - [ ] **Decide the signup model.** Public signup is open by default and gives
       every new org a free LLM quota (per-org quotas don't stop "make another
       org"). Registration is rate-limited to `RATE_LIMIT_REGISTER` (5/hour/IP),

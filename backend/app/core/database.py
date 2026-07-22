@@ -17,6 +17,7 @@ independent of this metadata DB.
 from __future__ import annotations
 
 import hashlib
+import logging
 import re
 import secrets
 from datetime import UTC, datetime, timedelta
@@ -46,6 +47,8 @@ from sqlalchemy.exc import IntegrityError
 
 from app.core.config import settings
 from app.core.dataset_storage import dataset_storage
+
+logger = logging.getLogger("datawhisper.database")
 
 metadata = MetaData()
 
@@ -230,8 +233,25 @@ def init_db() -> None:
     metadata.create_all(engine)
     with engine.begin() as conn:
         has_users = conn.execute(select(func.count()).select_from(users)).scalar()
-        if not has_users:
-            _seed_demo_org(conn)
+        if has_users:
+            return
+        if not settings.should_seed_demo:
+            # Empty production database: no demo accounts. The first org is
+            # created via /api/auth/register (or a deliberate bootstrap).
+            logger.info("init_db: empty database, demo seeding disabled — no accounts created")
+            return
+        if not settings.DEBUG and (
+            settings.ADMIN_PASSWORD == "Admin@2024"
+            or settings.MANAGER_PASSWORD == "Manager@2024"
+        ):
+            # They opted into seeding in production but left the built-in
+            # passwords — the exact footgun this gate exists to prevent.
+            logger.warning(
+                "init_db: seeding demo accounts in a non-DEBUG environment with "
+                "DEFAULT passwords. Rotate ceo/manager immediately or set "
+                "SEED_DEMO_DATA=false."
+            )
+        _seed_demo_org(conn)
 
 
 def _seed_demo_org(conn) -> None:

@@ -15,7 +15,7 @@ work is operational/business — see [GO_LIVE_CHECKLIST.md](GO_LIVE_CHECKLIST.md
 
 | Area | State |
 |------|-------|
-| Backend tests | **153 passing**, `ruff` clean |
+| Backend tests | **159 passing**, `ruff` clean |
 | Frontend | Vite build OK, **15 Vitest tests** passing, runtime `npm audit` clean |
 | E2E | Playwright full-flow smoke (**verified locally**, not yet run in CI) — `frontend/e2e/` |
 | Migrations | Head is `e3d9b5c1a740` (Stripe billing linkage) |
@@ -40,7 +40,7 @@ work is operational/business — see [GO_LIVE_CHECKLIST.md](GO_LIVE_CHECKLIST.md
 ```bash
 # Backend (from backend/)
 export SECRET_KEY=$(python3 -c 'import secrets;print(secrets.token_hex(32))') DEBUG=true
-python3 -m pytest                       # expect 153 passed
+python3 -m pytest                       # expect 159 passed
 python3 -m ruff check app tests         # expect clean
 python3 -m pip_audit -r requirements.txt
 
@@ -88,6 +88,12 @@ Things that are easy to miss when reading the code cold:
   unaffected. Don't "fix" them appearing inactive locally.
 - **The audit log is a hash chain.** Editing/reordering/deleting rows breaks
   it; `/api/audit/verify` detects that. Don't write to `audit_logs` directly.
+- **Demo accounts don't seed in production.** `init_db` seeds `ceo`/`manager`
+  only when `settings.should_seed_demo` — which follows `DEBUG` unless
+  `SEED_DEMO_DATA` is set (issue #23). So dev/test get the demo org and prod
+  (`DEBUG=false`) starts empty, first org via `/api/auth/register`. Tests rely
+  on the DEBUG-true default seeding for the `admin_token`/`manager_token`
+  fixtures — don't break that.
 - **Stripe is opt-in and webhook-driven.** Unset `STRIPE_SECRET_KEY` → billing
   routes 503, everything else unaffected. Entitlements change *only* on a
   signature-verified webhook, never on the post-checkout redirect. The webhook
