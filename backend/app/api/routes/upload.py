@@ -22,6 +22,7 @@ from app.core.database import (
     discard_user_duckdb,
     get_user_duckdb,
     persist_user_duckdb,
+    record_upload_shape,
     register_session,
 )
 from app.core.quota import ROWS_PROCESSED, UPLOADS, enforce_quota
@@ -64,8 +65,12 @@ def _safe_table_name(filename: str) -> str:
     return name
 
 
-async def _stream_to_disk(file: UploadFile, dest: Path) -> None:
-    """Copy the upload to disk, aborting if it exceeds the configured limit."""
+async def _stream_to_disk(file: UploadFile, dest: Path) -> int:
+    """Copy the upload to disk, aborting if it exceeds the configured limit.
+
+    Returns the number of bytes written — used with the parsed row count to
+    calibrate bytes-per-row for the plan row ceilings (issue #24).
+    """
     written = 0
     limit = settings.max_upload_bytes
     with open(dest, "wb") as out:
@@ -81,6 +86,7 @@ async def _stream_to_disk(file: UploadFile, dest: Path) -> None:
                     413, f"File exceeds the maximum size of {settings.MAX_UPLOAD_SIZE_MB} MB"
                 )
             out.write(chunk)
+    return written
 
 
 @router.post("/")
@@ -106,7 +112,7 @@ async def upload_file(
     settings.UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     file_path = settings.UPLOAD_DIR / f"{session_id}{ext}"
 
-    await _stream_to_disk(file, file_path)
+    file_bytes = await _stream_to_disk(file, file_path)
 
     try:
         df = parse_file(file_path)
@@ -141,6 +147,10 @@ async def upload_file(
     )
     quota_record(org_id, UPLOADS, 1)
     quota_record(org_id, ROWS_PROCESSED, len(df))
+    # Feeds the platform-wide bytes-per-row calibration the row ceilings are
+    # sized against (issue #24) — the ceilings started as guesses, this is how
+    # they stop being guesses.
+    record_upload_shape(file_bytes, len(df))
     conversation_store.invalidate(session_id)
 
     anomalies = detect_anomalies(df, table_name)

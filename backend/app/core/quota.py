@@ -15,7 +15,12 @@ from datetime import UTC, datetime
 from fastapi import HTTPException, status
 
 from app.core.config import settings
-from app.core.database import get_org_plan, get_usage, record_usage
+from app.core.database import (
+    get_org_plan,
+    get_upload_shape_stats,
+    get_usage,
+    record_usage,
+)
 
 logger = logging.getLogger("datawhisper.quota")
 
@@ -40,12 +45,42 @@ PLAN_LIMITS: dict[str, dict[str, int]] = {
     "enterprise": {QUERIES: -1, UPLOADS: -1, ROWS_PROCESSED: -1},
 }
 
-# Rough bytes-per-row for a typical CSV, used only to sanity-check the limits
-# against each other at startup. Deliberately conservative: underestimating
-# row size overestimates the row count, so the check errs toward warning.
-_EST_BYTES_PER_ROW = 100
+# Fallback bytes-per-row for a typical CSV, used only until real uploads have
+# been measured (see ``bytes_per_row_estimate``). A guess, and labelled as one
+# everywhere it surfaces.
+_FALLBACK_BYTES_PER_ROW = 100
+
+# How many uploads must be on record before the measurement is trusted over the
+# fallback. Small enough to start being useful quickly, large enough that one
+# freak file (a 3-row CSV, a single very wide export) can't move the ceiling.
+_MIN_SAMPLES = 20
 
 UNLIMITED = -1
+
+
+def bytes_per_row_estimate() -> dict:
+    """Bytes per row to size row ceilings with — measured when data exists.
+
+    Uses the **narrowest** file observed, not the mean: the failure mode this
+    guards is "one maximum-size upload contains more rows than the plan allows",
+    and the narrower the rows, the more of them fit in those bytes. A mean would
+    be dragged up by wide exports and hide exactly the case that breaks.
+
+    Returns the value, its source (``measured`` | ``fallback``), and the sample
+    size, so callers can say which one they used rather than implying certainty.
+    """
+    stats = get_upload_shape_stats()
+    observed = stats.get("min_bytes_per_row")
+    if stats.get("uploads", 0) >= _MIN_SAMPLES and observed:
+        return {
+            "bytes_per_row": observed, "source": "measured",
+            "uploads": stats["uploads"], "mean_bytes_per_row": stats["mean_bytes_per_row"],
+        }
+    return {
+        "bytes_per_row": float(_FALLBACK_BYTES_PER_ROW), "source": "fallback",
+        "uploads": stats.get("uploads", 0),
+        "mean_bytes_per_row": stats.get("mean_bytes_per_row"),
+    }
 
 
 def check_limits_are_reachable() -> list[str]:
@@ -55,8 +90,22 @@ def check_limits_are_reachable() -> list[str]:
     people at different times, so it is easy to raise MAX_UPLOAD_SIZE_MB (or
     lower a row ceiling) and leave a plan where every large upload 429s after
     being parsed. Returns the warnings so tests can assert on them.
+
+    Runs at startup, so it reflects the calibration as of boot; ``GET
+    /api/usage/limits`` re-evaluates it live once more uploads have landed.
     """
-    est_rows = (settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024) // _EST_BYTES_PER_ROW
+    est = bytes_per_row_estimate()
+    est_rows = int((settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024) // est["bytes_per_row"])
+    if est["source"] == "measured":
+        basis = (
+            f"{est['bytes_per_row']:.1f} B/row, the narrowest of "
+            f"{est['uploads']:,} measured uploads"
+        )
+    else:
+        basis = (
+            f"an assumed {est['bytes_per_row']:.0f} B/row — only {est['uploads']:,} "
+            f"uploads measured so far, {_MIN_SAMPLES} needed"
+        )
     warnings: list[str] = []
     for plan, limits in PLAN_LIMITS.items():
         limit = limits.get(ROWS_PROCESSED, UNLIMITED)
@@ -64,11 +113,47 @@ def check_limits_are_reachable() -> list[str]:
             warnings.append(
                 f"Plan '{plan}' allows {limit:,} rows/month but a single "
                 f"{settings.MAX_UPLOAD_SIZE_MB} MB upload is roughly "
-                f"{est_rows:,} rows — large uploads will be rejected."
+                f"{est_rows:,} rows ({basis}) — large uploads will be rejected."
             )
     for warning in warnings:
         logger.warning("quota: %s", warning)
     return warnings
+
+
+def limits_report() -> dict:
+    """Operator-facing view of the row-ceiling calibration and its warnings.
+
+    This is the data needed to answer "are our row ceilings right?" with
+    evidence instead of the guess they were originally picked with (issue #24).
+    """
+    est = bytes_per_row_estimate()
+    max_bytes = settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024
+    rows_in_max_upload = int(max_bytes // est["bytes_per_row"])
+    return {
+        "max_upload_mb": settings.MAX_UPLOAD_SIZE_MB,
+        "bytes_per_row": round(est["bytes_per_row"], 2),
+        "bytes_per_row_source": est["source"],
+        "mean_bytes_per_row": (
+            round(est["mean_bytes_per_row"], 2) if est["mean_bytes_per_row"] else None
+        ),
+        "uploads_measured": est["uploads"],
+        "samples_needed": _MIN_SAMPLES,
+        "rows_in_one_max_upload": rows_in_max_upload,
+        "plans": {
+            plan: {
+                "rows_limit": (
+                    None if limits.get(ROWS_PROCESSED, UNLIMITED) == UNLIMITED
+                    else limits[ROWS_PROCESSED]
+                ),
+                "max_uploads_at_ceiling": (
+                    None if limits.get(ROWS_PROCESSED, UNLIMITED) == UNLIMITED
+                    else limits[ROWS_PROCESSED] // max(rows_in_max_upload, 1)
+                ),
+            }
+            for plan, limits in PLAN_LIMITS.items()
+        },
+        "warnings": check_limits_are_reachable(),
+    }
 
 
 def current_period(now: datetime | None = None) -> str:

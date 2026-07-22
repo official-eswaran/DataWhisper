@@ -18,7 +18,7 @@ work is operational/business — see [GO_LIVE_CHECKLIST.md](GO_LIVE_CHECKLIST.md
 | Backend tests | **164 passing**, `ruff` clean |
 | Frontend | Vite build OK, **15 Vitest tests** passing, runtime `npm audit` clean |
 | E2E | Playwright full-flow smoke (**verified locally**, not yet run in CI) — `frontend/e2e/` |
-| Migrations | Head is `e3d9b5c1a740` (Stripe billing linkage) |
+| Migrations | Head is `f4a2c07be913` (upload shape stats) |
 | Open issues | **#5 only** (go-live checklist — non-code) |
 
 ### What shipped (all merged to `master`)
@@ -82,7 +82,12 @@ Things that are easy to miss when reading the code cold:
   is below the row count of one maximum-size upload, every large upload 429s
   *after* being parsed and the plan is effectively unusable. They live in
   different files, so `check_limits_are_reachable()` warns at startup when they
-  drift. If you raise `MAX_UPLOAD_SIZE_MB`, check the logs.
+  drift. If you raise `MAX_UPLOAD_SIZE_MB`, check the logs. The rows-per-MB
+  figure it compares against is **measured, not assumed** (issue #24): every
+  upload of ≥1,000 rows is folded into `upload_shape_stats`, and after 20
+  samples the check switches from the assumed 100 B/row to the *narrowest*
+  file observed — narrow rows being the case that overflows a ceiling. See
+  `GET /api/usage/limits`.
 - **Sentry and OTel are strictly opt-in.** Both are complete no-ops unless
   `SENTRY_DSN` / `OTEL_EXPORTER_OTLP_ENDPOINT` are set, so dev and tests are
   unaffected. Don't "fix" them appearing inactive locally.
@@ -155,13 +160,14 @@ None are blocking, but they're the honest loose ends:
   can be closed entirely with `SIGNUPS_OPEN=false`. The complete fix — email
   verification or captcha before an org gets free quota — still needs email/
   captcha infra that isn't here.
-- **The `rows_processed` ceilings are guesses.** 10M/month on free and 50M on
-  pro were picked without usage data — revisit once real tenants exist.
-  Nothing is reported to Stripe as metered usage; the cap blocks work rather
-  than adding to the bill.
-- **The bytes-per-row estimate is crude.** `check_limits_are_reachable` assumes
-  ~100 bytes/row to compare the row ceilings against `MAX_UPLOAD_SIZE_MB`.
-  Wide tables are much heavier, so the check is a drift alarm, not a guarantee.
+- **The `rows_processed` ceilings are still guesses, but no longer unmeasured.**
+  10M/month on free and 50M on pro were picked without usage data. The platform
+  now measures bytes-per-row from every upload of ≥1,000 rows and
+  `GET /api/usage/limits` reports what those ceilings actually buy (issue #24) —
+  but nothing has uploaded to a real deployment yet, so the sample is empty and
+  the check still falls back to the assumed 100 B/row until 20 uploads land.
+  Revisit the numbers once that endpoint has data. Nothing is reported to Stripe
+  as metered usage; the cap blocks work rather than adding to the bill.
 
 ---
 

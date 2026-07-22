@@ -28,6 +28,7 @@ from sqlalchemy import (
     Boolean,
     Column,
     DateTime,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -136,6 +137,22 @@ usage_counters = Table(
     Column("period", String(7), primary_key=True),        # e.g. "2026-07"
     Column("metric", String(32), primary_key=True),       # queries|uploads|rows_processed
     Column("count", BigInteger, nullable=False, default=0),
+    Column("updated_at", DateTime(timezone=True), server_default=func.now()),
+)
+
+# Platform-wide calibration of "how many rows fit in an uploaded file" (issue
+# #24). One row, id=1: a running aggregate over every successful upload, plus
+# the *narrowest* file seen. Deliberately not per-org — this measures the shape
+# of data, not a tenant's usage, and one org's uploads inform another's ceiling.
+upload_shape_stats = Table(
+    "upload_shape_stats", metadata,
+    Column("id", Integer, primary_key=True),          # always 1
+    Column("uploads", BigInteger, nullable=False, default=0),
+    Column("total_bytes", BigInteger, nullable=False, default=0),
+    Column("total_rows", BigInteger, nullable=False, default=0),
+    # Smallest bytes-per-row ever observed — the worst case for a row ceiling,
+    # because the narrower the rows the more of them fit in one upload.
+    Column("min_bytes_per_row", Float, nullable=False, default=0.0),
     Column("updated_at", DateTime(timezone=True), server_default=func.now()),
 )
 
@@ -749,6 +766,76 @@ def record_usage(org_id: int, metric: str, period: str, amount: int = 1) -> None
     )
     with engine.begin() as conn:
         conn.execute(stmt)
+
+
+# Uploads smaller than this are not folded into the bytes-per-row calibration.
+# In a small file the header and per-file overhead dominate, so its bytes-per-row
+# is inflated — and since the calibration keeps the *minimum*, letting small
+# files in would bias the estimate high, which is the unsafe direction (it makes
+# a max-size upload look like fewer rows than it is).
+_MIN_ROWS_FOR_SHAPE = 1_000
+
+
+def record_upload_shape(file_bytes: int, rows: int) -> None:
+    """Fold one successful upload into the platform's bytes-per-row calibration.
+
+    Best-effort and never on the request's critical path for correctness: a
+    failure here loses a data point, not an upload.
+    """
+    if file_bytes <= 0 or rows < _MIN_ROWS_FOR_SHAPE:
+        return
+    bytes_per_row = file_bytes / rows
+    engine = get_engine()
+    try:
+        with engine.begin() as conn:
+            row = conn.execute(
+                select(upload_shape_stats).where(upload_shape_stats.c.id == 1).with_for_update()
+            ).first()
+            if row is None:
+                conn.execute(insert(upload_shape_stats).values(
+                    id=1, uploads=1, total_bytes=file_bytes, total_rows=rows,
+                    min_bytes_per_row=bytes_per_row, updated_at=_now(),
+                ))
+                return
+            conn.execute(
+                update(upload_shape_stats).where(upload_shape_stats.c.id == 1).values(
+                    uploads=row.uploads + 1,
+                    total_bytes=row.total_bytes + file_bytes,
+                    total_rows=row.total_rows + rows,
+                    min_bytes_per_row=min(row.min_bytes_per_row, bytes_per_row),
+                    updated_at=_now(),
+                )
+            )
+    except Exception:  # pragma: no cover - telemetry must never break an upload
+        logger.warning("could not record upload shape", exc_info=True)
+
+
+def get_upload_shape_stats() -> dict:
+    """Observed upload shape: sample size, mean and narrowest bytes-per-row."""
+    try:
+        with get_engine().connect() as conn:
+            row = conn.execute(
+                select(upload_shape_stats).where(upload_shape_stats.c.id == 1)
+            ).first()
+    except Exception:  # pragma: no cover - pre-migration DB, or DB down
+        row = None
+    if row is None or not row.uploads or not row.total_rows:
+        return {"uploads": 0, "mean_bytes_per_row": None, "min_bytes_per_row": None}
+    return {
+        "uploads": int(row.uploads),
+        "mean_bytes_per_row": row.total_bytes / row.total_rows,
+        "min_bytes_per_row": float(row.min_bytes_per_row),
+    }
+
+
+def reset_upload_shape_stats() -> None:
+    """Discard the accumulated calibration.
+
+    For operators whose ingestion has changed shape enough that old samples
+    mislead (and for tests, which must not leak samples into each other).
+    """
+    with get_engine().begin() as conn:
+        conn.execute(delete(upload_shape_stats))
 
 
 def get_usage(org_id: int, period: str) -> dict[str, int]:

@@ -17,7 +17,7 @@ from pydantic import BaseModel, field_validator
 
 from app.core.config import settings
 from app.core.database import set_org_plan
-from app.core.quota import PLAN_LIMITS, usage_summary
+from app.core.quota import PLAN_LIMITS, limits_report, usage_summary
 from app.core.security import get_current_user, require_admin
 
 router = APIRouter()
@@ -38,6 +38,18 @@ class PlanRequest(BaseModel):
 def get_usage(admin: Annotated[dict, Depends(require_admin)]):
     """Current-period usage vs plan limits for the caller's org."""
     return usage_summary(admin.get("org_id", -1))
+
+
+@router.get("/limits")
+def get_limits(admin: Annotated[dict, Depends(require_admin)]):
+    """Row-ceiling calibration: measured bytes-per-row vs the configured caps.
+
+    The ceilings were originally picked without usage data (issue #24). This
+    reports what real uploads actually weigh, whether the sample is yet big
+    enough to trust, and how many maximum-size uploads each plan's ceiling
+    really buys — the evidence needed to set the caps from data.
+    """
+    return limits_report()
 
 
 @router.put("/plan")
