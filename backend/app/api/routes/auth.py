@@ -109,9 +109,20 @@ def _issue_tokens(username: str, role: str, org_id: int) -> dict:
 
 
 @router.post("/register", status_code=201)
-@limiter.limit(settings.RATE_LIMIT_LOGIN)
+@limiter.limit(settings.RATE_LIMIT_REGISTER)
 def register(request: Request, req: RegisterRequest):
-    """Self-service signup — creates a new organization and its owner user."""
+    """Self-service signup — creates a new organization and its owner user.
+
+    Gated by ``SIGNUPS_OPEN`` and a dedicated, tight per-IP rate limit: a new org
+    carries a free query/upload budget, and quotas are per-org, so uncontrolled
+    registration is a direct compute-abuse path (issue #21).
+    """
+    if not settings.SIGNUPS_OPEN:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Public signup is closed on this deployment. Contact an administrator "
+            "for access.",
+        )
     try:
         created = create_organization_with_owner(
             org_name=req.org_name,

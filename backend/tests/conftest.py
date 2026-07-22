@@ -14,6 +14,7 @@ os.environ.setdefault("ALLOWED_ORIGINS", "*")
 os.environ.setdefault("RATE_LIMIT_LOGIN", "1000/minute")
 os.environ.setdefault("RATE_LIMIT_QUERY", "1000/minute")
 os.environ.setdefault("RATE_LIMIT_UPLOAD", "1000/minute")
+os.environ.setdefault("RATE_LIMIT_REGISTER", "1000/minute")
 
 import pytest
 from fastapi.testclient import TestClient

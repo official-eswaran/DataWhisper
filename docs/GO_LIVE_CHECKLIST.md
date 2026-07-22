@@ -100,6 +100,13 @@ Do **not** skip this — an untested backup is not a backup.
 - [ ] Confirm CI is green on `master` (pip-audit, npm audit, Trivy, coverage gate)
 - [ ] Confirm TLS terminates at the ingress and HTTP redirects to HTTPS
 - [ ] Rotate the seeded demo accounts (`ceo` / `manager`) or disable them
+- [ ] **Decide the signup model.** Public signup is open by default and gives
+      every new org a free LLM quota (per-org quotas don't stop "make another
+      org"). Registration is rate-limited to `RATE_LIMIT_REGISTER` (5/hour/IP),
+      but that only slows single-IP abuse. Either set `SIGNUPS_OPEN=false`
+      (invite-only) or add email verification / captcha before opening to the
+      public — see issue #21. The rate limit + kill switch are in; verification
+      is not.
 - [ ] Consider an external penetration test before onboarding enterprise customers
 - [ ] **Verify:** `/api/audit/verify` returns an intact hash chain
 

@@ -69,6 +69,19 @@ class Settings(BaseSettings):
     RATE_LIMIT_LOGIN: str = "10/minute"
     RATE_LIMIT_QUERY: str = "30/minute"
     RATE_LIMIT_UPLOAD: str = "20/minute"
+    # Registration creates a whole org with a free query/upload budget, so it is
+    # far more expensive to abuse than a login. It gets its own, much tighter
+    # per-IP limit rather than sharing the login limit (issue #21).
+    RATE_LIMIT_REGISTER: str = "5/hour"
+
+    # ── Signup gating (issue #21) ───────────────────────────────────────────────
+    # Public self-service signup is an abuse vector on a compute-heavy product:
+    # each new org gets free LLM quota, and quotas are per-org, so "make another
+    # org" bypasses them. Set SIGNUPS_OPEN=false to close public registration for
+    # private/invite-only deployments — /api/auth/register then returns 403.
+    # (Existing orgs and their users are unaffected.) Default stays open so the
+    # current behaviour is unchanged.
+    SIGNUPS_OPEN: bool = True
 
     # ── Shared state / scaling ──────────────────────────────────────────────────
     # When set (e.g. redis://redis:6379/0), the conversation store and rate

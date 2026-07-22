@@ -15,7 +15,7 @@ work is operational/business — see [GO_LIVE_CHECKLIST.md](GO_LIVE_CHECKLIST.md
 
 | Area | State |
 |------|-------|
-| Backend tests | **148 passing**, `ruff` clean |
+| Backend tests | **153 passing**, `ruff` clean |
 | Frontend | Vite build OK, **15 Vitest tests** passing, runtime `npm audit` clean |
 | E2E | Playwright full-flow smoke (**verified locally**, not yet run in CI) — `frontend/e2e/` |
 | Migrations | Head is `e3d9b5c1a740` (Stripe billing linkage) |
@@ -40,7 +40,7 @@ work is operational/business — see [GO_LIVE_CHECKLIST.md](GO_LIVE_CHECKLIST.md
 ```bash
 # Backend (from backend/)
 export SECRET_KEY=$(python3 -c 'import secrets;print(secrets.token_hex(32))') DEBUG=true
-python3 -m pytest                       # expect 148 passed
+python3 -m pytest                       # expect 153 passed
 python3 -m ruff check app tests         # expect clean
 python3 -m pip_audit -r requirements.txt
 
@@ -135,6 +135,11 @@ None are blocking, but they're the honest loose ends:
 - **The E2E has never run in GitHub Actions.** It passes locally against real
   Ollama, but the CI workflow (`e2e.yml`) is unverified on a hosted runner —
   the Ollama install/model-pull is the likely rough edge on first run.
+- **Open signup has a rate limit + kill switch, but no verification (issue
+  #21).** Registration is now capped at `RATE_LIMIT_REGISTER` (5/hour/IP) and
+  can be closed entirely with `SIGNUPS_OPEN=false`. The complete fix — email
+  verification or captcha before an org gets free quota — still needs email/
+  captcha infra that isn't here.
 - **The `rows_processed` ceilings are guesses.** 10M/month on free and 50M on
   pro were picked without usage data — revisit once real tenants exist.
   Nothing is reported to Stripe as metered usage; the cap blocks work rather
