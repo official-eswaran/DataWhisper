@@ -9,6 +9,10 @@ data:
   DEBUG: "false"
   OLLAMA_BASE_URL: "http://ollama:11434"
   REDIS_URL: "redis://redis:6379/0"
+  # This deployment scales past one replica, so shared state is not optional:
+  # without Redis the LLM cache, conversation history, and rate limits become
+  # per-pod. Refuse to start rather than degrade silently (issue #29).
+  REQUIRE_SHARED_STATE: "true"
   LLM_MODEL: "llama3.2:3b"
   LLM_MAX_CONCURRENCY: "4"
   LOG_JSON: "true"

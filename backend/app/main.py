@@ -40,6 +40,7 @@ from app.core.observability import (
 )
 from app.core.quota import check_limits_are_reachable
 from app.core.ratelimit import limiter
+from app.core.session_store import check_shared_state
 from app.core.telemetry import init_sentry, init_tracing
 
 setup_logging(debug=settings.DEBUG, json_logs=settings.LOG_JSON)
@@ -68,6 +69,7 @@ async def _cleanup_loop():
 async def lifespan(app: FastAPI):
     init_db()
     check_limits_are_reachable()  # warns if a plan's row cap rejects big uploads
+    check_shared_state()          # warns (or refuses) if prod has no shared Redis
     logger.info("DataWhisper started — model: %s", settings.LLM_MODEL)
     task = asyncio.create_task(_cleanup_loop())
     try:

@@ -103,6 +103,13 @@ class Settings(BaseSettings):
     # Empty → in-process fallback (single worker only).
     REDIS_URL: str = ""
 
+    # In-process state is *correct* on one replica and silently wrong on several
+    # (per-pod cache, split conversations, per-pod rate limits), and a process
+    # can't see its own replica count — so the default is a loud startup warning.
+    # Any deployment that can scale past one replica should set this true, which
+    # turns the warning into a refusal to start (issue #29). The k8s manifests do.
+    REQUIRE_SHARED_STATE: bool = False
+
     # ── Observability ───────────────────────────────────────────────────────────
     LOG_JSON: bool = False          # structured JSON logs (for shipping to Loki/ELK)
     METRICS_ENABLED: bool = True    # expose Prometheus /metrics

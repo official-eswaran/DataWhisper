@@ -14,12 +14,15 @@ methods, so switching backends is purely a configuration change.
 from __future__ import annotations
 
 import json
+import logging
 import threading
 import time
 from collections import OrderedDict
 from typing import Any, Protocol
 
 from app.core.config import settings
+
+logger = logging.getLogger("datawhisper.session_store")
 
 _MAX_TURNS = 6  # last 3 Q&A pairs
 
@@ -133,6 +136,41 @@ class RedisConversationStore:
 
 
 # ── Factory ───────────────────────────────────────────────────────────────────
+
+_NO_SHARED_STATE = (
+    "REDIS_URL is unset in a non-DEBUG environment: the LLM cache, conversation "
+    "store, and rate limiter are per-process. This is correct for a single "
+    "replica ONLY — set REDIS_URL before running more than one, or state will "
+    "silently diverge between pods (per-pod cache, split conversation history, "
+    "per-pod rate limits)."
+)
+
+
+def check_shared_state() -> list[str]:
+    """Warn — or refuse to start — when production has no shared state backend.
+
+    The LLM cache, conversation store, and (via slowapi) rate limiting all fall
+    back to in-process state when ``REDIS_URL`` is unset. Single-replica
+    production is legitimate and a process can't see its own replica count, so
+    the default is a loud warning rather than a failure. A deployment that can
+    scale past one replica sets ``REQUIRE_SHARED_STATE=true`` and gets a hard
+    failure instead — which is the point of issue #29: the bad case is silent,
+    not impossible.
+
+    Returns the warnings so tests can assert on them; also logged at WARNING.
+    """
+    warnings: list[str] = []
+    if not settings.DEBUG and not settings.REDIS_URL:
+        if settings.REQUIRE_SHARED_STATE:
+            raise RuntimeError(
+                f"{_NO_SHARED_STATE} REQUIRE_SHARED_STATE=true, so this process "
+                "refuses to start without it."
+            )
+        warnings.append(_NO_SHARED_STATE)
+    for warning in warnings:
+        logger.warning("startup: %s", warning)
+    return warnings
+
 
 def build_conversation_store() -> ConversationBackend:
     ttl = settings.CONVERSATION_TTL_MINUTES * 60
