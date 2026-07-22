@@ -107,18 +107,24 @@ def test_unauthenticated_is_rejected(client):
 def test_refresh_and_logout_flow(client):
     login = client.post("/api/auth/login", json={"username": "ceo", "password": "Admin@2024"})
     assert login.status_code == 200
-    tokens = login.json()
-    assert "refresh_token" in tokens and "access_token" in tokens
+    body = login.json()
+    assert "access_token" in body
+    # The refresh token is now an httpOnly cookie, never in the JSON body (#22).
+    assert "refresh_token" not in body
+    old_cookie = login.cookies.get("dw_refresh")
+    assert old_cookie, "login must set the httpOnly refresh cookie"
 
-    # Refresh rotates to a new pair.
-    r = client.post("/api/auth/refresh", json={"refresh_token": tokens["refresh_token"]})
-    assert r.status_code == 200
-    new_tokens = r.json()
-    assert new_tokens["access_token"] != tokens["access_token"]
+    # Refresh rotates to a new pair — the cookie is sent automatically.
+    r = client.post("/api/auth/refresh")
+    assert r.status_code == 200, r.text
+    assert r.json()["access_token"] != body["access_token"]
+    assert r.cookies.get("dw_refresh"), "rotation must issue a fresh refresh cookie"
 
-    # Old refresh token was revoked on rotation.
-    reused = client.post("/api/auth/refresh", json={"refresh_token": tokens["refresh_token"]})
+    # The OLD token was revoked on rotation: presenting it explicitly fails.
+    client.cookies.set("dw_refresh", old_cookie, path="/api/auth")
+    reused = client.post("/api/auth/refresh")
     assert reused.status_code == 401
+    client.cookies.clear()  # don't leave the revoked cookie in the shared jar
 
 
 def test_bad_login_is_401(client):

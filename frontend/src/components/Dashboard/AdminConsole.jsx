@@ -54,14 +54,15 @@ function UsageCard({ usage }) {
   );
 }
 
-function AdminConsole() {
+function AdminConsole({ role }) {
   const [usage, setUsage] = useState(null);
   const [billing, setBilling] = useState(null);
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [form, setForm] = useState({ username: "", email: "", password: "", role: "member" });
   const [creating, setCreating] = useState(false);
-  const isOwner = localStorage.getItem("role") === "owner";
+  // role comes from the authed session (memory), not localStorage (#22).
+  const isOwner = role === "owner";
 
   const load = useCallback(async () => {
     setLoading(true);

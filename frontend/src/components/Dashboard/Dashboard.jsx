@@ -85,7 +85,7 @@ function Dashboard({ auth, onLogout }) {
 
         {activeTab === "audit" && <AuditLogs />}
 
-        {activeTab === "admin" && isAdmin && <AdminConsole />}
+        {activeTab === "admin" && isAdmin && <AdminConsole role={auth.role} />}
 
         {activeTab === "account" && (
           <AccountSettings role={auth.role} onLogout={onLogout} />

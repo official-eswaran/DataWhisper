@@ -37,7 +37,9 @@ def test_registration_creates_org_owner(client):
     assert r.status_code == 201, r.text
     body = r.json()
     assert body["role"] == "owner"
-    assert "access_token" in body and "refresh_token" in body
+    assert "access_token" in body
+    assert "refresh_token" not in body  # refresh token is a cookie now (#22)
+    assert r.cookies.get("dw_refresh"), "register must set the refresh cookie"
 
 
 def test_registration_rejects_weak_password(client):

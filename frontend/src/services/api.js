@@ -7,23 +7,30 @@ import axios from "axios";
 //    VITE_API_URL=http://localhost:8000/api
 const API_BASE = import.meta.env.VITE_API_URL || "/api";
 
-// ── Token storage ─────────────────────────────────────────────────────────────
+// ── Token storage (issue #22) ─────────────────────────────────────────────────
+// Nothing token-shaped goes in localStorage anymore. The access token and role
+// live in module memory only, so an XSS payload can't read them from storage
+// and can't persist beyond the current tab. The refresh token isn't here at all
+// — it's an httpOnly cookie the browser holds and only ever sends to
+// /api/auth/*, invisible to JavaScript. On reload, memory is empty and the app
+// re-mints an access token via bootstrapSession() using that cookie.
+let accessToken = null;
+let userRole = null;
+
 const tokens = {
   get access() {
-    return localStorage.getItem("token");
+    return accessToken;
   },
-  get refresh() {
-    return localStorage.getItem("refresh_token");
+  get role() {
+    return userRole;
   },
   set(data) {
-    localStorage.setItem("token", data.access_token);
-    if (data.refresh_token) localStorage.setItem("refresh_token", data.refresh_token);
-    if (data.role) localStorage.setItem("role", data.role);
+    if (data?.access_token) accessToken = data.access_token;
+    if (data?.role) userRole = data.role;
   },
   clear() {
-    localStorage.removeItem("token");
-    localStorage.removeItem("refresh_token");
-    localStorage.removeItem("role");
+    accessToken = null;
+    userRole = null;
   },
 };
 
@@ -38,14 +45,13 @@ function redirectToLogin() {
 let refreshPromise = null;
 
 async function refreshAccessToken() {
-  const refresh_token = tokens.refresh;
-  if (!refresh_token) return null;
-
+  // No token argument: the refresh token rides along as the httpOnly cookie.
+  // credentials:"include" ensures it's sent (required if the API is ever on a
+  // different origin; a no-op for the same-origin prod/proxy setup).
   if (!refreshPromise) {
     refreshPromise = fetch(`${API_BASE}/auth/refresh`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ refresh_token }),
+      credentials: "include",
     })
       .then(async (res) => {
         if (!res.ok) throw new Error("refresh failed");
@@ -54,7 +60,9 @@ async function refreshAccessToken() {
         return data.access_token;
       })
       .catch(() => {
-        redirectToLogin();
+        // No redirect here: callers decide. On boot there may simply be no
+        // session yet, which is not an error worth bouncing the user for.
+        tokens.clear();
         return null;
       })
       .finally(() => {
@@ -64,8 +72,18 @@ async function refreshAccessToken() {
   return refreshPromise;
 }
 
+// Called once on app start to recover a session from the refresh cookie. Returns
+// { token, role } when a valid cookie exists, else null.
+export const bootstrapSession = async () => {
+  const token = await refreshAccessToken();
+  return token ? { token, role: tokens.role } : null;
+};
+
 // ── Axios instance ─────────────────────────────────────────────────────────────
-const API = axios.create({ baseURL: API_BASE });
+// withCredentials so login/register Set-Cookie is stored and the refresh cookie
+// is sent to /auth/*. Same-origin (prod nginx, dev proxy) would do this anyway;
+// explicit keeps it working if the API is ever split to another origin.
+const API = axios.create({ baseURL: API_BASE, withCredentials: true });
 
 API.interceptors.request.use((config) => {
   const token = tokens.access;

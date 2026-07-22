@@ -15,7 +15,7 @@ work is operational/business — see [GO_LIVE_CHECKLIST.md](GO_LIVE_CHECKLIST.md
 
 | Area | State |
 |------|-------|
-| Backend tests | **159 passing**, `ruff` clean |
+| Backend tests | **164 passing**, `ruff` clean |
 | Frontend | Vite build OK, **15 Vitest tests** passing, runtime `npm audit` clean |
 | E2E | Playwright full-flow smoke (**verified locally**, not yet run in CI) — `frontend/e2e/` |
 | Migrations | Head is `e3d9b5c1a740` (Stripe billing linkage) |
@@ -40,7 +40,7 @@ work is operational/business — see [GO_LIVE_CHECKLIST.md](GO_LIVE_CHECKLIST.md
 ```bash
 # Backend (from backend/)
 export SECRET_KEY=$(python3 -c 'import secrets;print(secrets.token_hex(32))') DEBUG=true
-python3 -m pytest                       # expect 159 passed
+python3 -m pytest                       # expect 164 passed
 python3 -m ruff check app tests         # expect clean
 python3 -m pip_audit -r requirements.txt
 
@@ -88,6 +88,15 @@ Things that are easy to miss when reading the code cold:
   unaffected. Don't "fix" them appearing inactive locally.
 - **The audit log is a hash chain.** Editing/reordering/deleting rows breaks
   it; `/api/audit/verify` detects that. Don't write to `audit_logs` directly.
+- **Tokens: refresh in an httpOnly cookie, access in memory only (issue #22).**
+  `/api/auth/*` set a `dw_refresh` cookie (httpOnly, SameSite=Lax, Secure when
+  `DEBUG=false`, path `/api/auth`); the refresh token is never in the JSON body
+  or `localStorage`. `/api/auth/refresh` reads the cookie, not a body. The
+  frontend keeps the access token and role in module memory, so a reload starts
+  with no session and `bootstrapSession()` re-mints an access token from the
+  cookie before rendering routes — that's the brief boot gate in `App.jsx`. Deploy
+  note: this assumes SPA and API share an origin (prod nginx / dev vite proxy).
+  A split-origin setup needs SameSite=None+Secure and CORS `allow_credentials`.
 - **Demo accounts don't seed in production.** `init_db` seeds `ceo`/`manager`
   only when `settings.should_seed_demo` — which follows `DEBUG` unless
   `SEED_DEMO_DATA` is set (issue #23). So dev/test get the demo org and prod

@@ -12,7 +12,7 @@ import re
 from datetime import UTC, datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel, EmailStr, field_validator
 
@@ -63,8 +63,40 @@ class LoginRequest(BaseModel):
         return v
 
 
-class RefreshRequest(BaseModel):
-    refresh_token: str
+# ── Refresh token cookie (issue #22) ──────────────────────────────────────────
+# The refresh token is the crown jewel — it mints access tokens for its whole
+# lifetime. It is delivered as an httpOnly cookie so JavaScript (and therefore
+# any XSS) cannot read it. The access token is short-lived and lives only in the
+# client's memory. Nothing token-shaped is ever put in localStorage.
+REFRESH_COOKIE = "dw_refresh"
+# Scope the cookie to the auth routes: it is only ever needed by /refresh and
+# cleared by /logout, so it isn't sent on every API request.
+REFRESH_COOKIE_PATH = "/api/auth"
+
+
+def _set_refresh_cookie(response: Response, token: str) -> None:
+    response.set_cookie(
+        REFRESH_COOKIE,
+        token,
+        max_age=settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 3600,
+        httponly=True,
+        # Secure everywhere except local DEBUG, where the app runs over plain
+        # http and a Secure cookie would simply be dropped by the browser.
+        secure=not settings.DEBUG,
+        samesite="lax",
+        path=REFRESH_COOKIE_PATH,
+    )
+
+
+def _clear_refresh_cookie(response: Response) -> None:
+    # Same attributes as set() or the browser won't match and delete it.
+    response.delete_cookie(
+        REFRESH_COOKIE,
+        path=REFRESH_COOKIE_PATH,
+        httponly=True,
+        secure=not settings.DEBUG,
+        samesite="lax",
+    )
 
 
 class RegisterRequest(BaseModel):
@@ -95,13 +127,15 @@ class RegisterRequest(BaseModel):
         return validate_password_strength(v)
 
 
-def _issue_tokens(username: str, role: str, org_id: int) -> dict:
+def _issue_tokens(response: Response, username: str, role: str, org_id: int) -> dict:
+    """Issue an access+refresh pair. The refresh token goes into the httpOnly
+    cookie on ``response``; only the access token is returned in the body."""
     access, expires_in = create_access_token(username, role, org_id)
     refresh, jti, expires_at = create_refresh_token(username, role, org_id)
     store_refresh_token(jti, username, org_id, expires_at)
+    _set_refresh_cookie(response, refresh)
     return {
         "access_token": access,
-        "refresh_token": refresh,
         "token_type": "bearer",
         "expires_in": expires_in,
         "role": role,
@@ -110,7 +144,7 @@ def _issue_tokens(username: str, role: str, org_id: int) -> dict:
 
 @router.post("/register", status_code=201)
 @limiter.limit(settings.RATE_LIMIT_REGISTER)
-def register(request: Request, req: RegisterRequest):
+def register(request: Request, response: Response, req: RegisterRequest):
     """Self-service signup — creates a new organization and its owner user.
 
     Gated by ``SIGNUPS_OPEN`` and a dedicated, tight per-IP rate limit: a new org
@@ -132,12 +166,12 @@ def register(request: Request, req: RegisterRequest):
         )
     except ValueError:
         raise HTTPException(status.HTTP_409_CONFLICT, "Username or email already exists")
-    return _issue_tokens(created["username"], created["role"], created["org_id"])
+    return _issue_tokens(response, created["username"], created["role"], created["org_id"])
 
 
 @router.post("/login")
 @limiter.limit(settings.RATE_LIMIT_LOGIN)
-def login(request: Request, req: LoginRequest):
+def login(request: Request, response: Response, req: LoginRequest):
     user = get_user_by_username(req.username)
 
     if user is None:
@@ -173,33 +207,59 @@ def login(request: Request, req: LoginRequest):
         )
 
     record_successful_login(req.username)
-    return _issue_tokens(req.username, user["role"], user["org_id"])
+    return _issue_tokens(response, req.username, user["role"], user["org_id"])
 
 
 @router.post("/refresh")
 @limiter.limit(settings.RATE_LIMIT_LOGIN)
-def refresh(request: Request, req: RefreshRequest):
-    payload = decode_token(req.refresh_token, TOKEN_TYPE_REFRESH)
+def refresh(request: Request, response: Response):
+    """Mint a fresh access token from the httpOnly refresh cookie and rotate it.
+
+    The token comes from the cookie, never the request body, so it is not
+    reachable by client JavaScript (issue #22). A missing/invalid cookie clears
+    it and 401s, so a stale cookie doesn't keep failing silently.
+    """
+    cookie = request.cookies.get(REFRESH_COOKIE)
+    if not cookie:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "No refresh token")
+
+    try:
+        payload = decode_token(cookie, TOKEN_TYPE_REFRESH)
+    except HTTPException:
+        _clear_refresh_cookie(response)
+        raise
+
     jti = payload.get("jti", "")
     if not is_refresh_token_valid(jti):
+        _clear_refresh_cookie(response)
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Refresh token is no longer valid")
 
     # Confirm the account still exists and is active.
     user = get_user_by_username(payload.get("sub", ""))
     if user is None or not user["is_active"]:
         revoke_refresh_token(jti)
+        _clear_refresh_cookie(response)
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Account is unavailable")
 
-    # Rotate: revoke the presented token, issue a fresh pair.
+    # Rotate: revoke the presented token, issue a fresh pair (sets a new cookie).
     revoke_refresh_token(jti)
-    return _issue_tokens(user["username"], user["role"], user["org_id"])
+    return _issue_tokens(response, user["username"], user["role"], user["org_id"])
 
 
 @router.post("/logout")
-def logout(credentials: Annotated[HTTPAuthorizationCredentials, Depends(bearer_scheme)]):
-    """Revoke all of the caller's refresh tokens. Accepts an access token."""
+def logout(
+    response: Response,
+    credentials: Annotated[HTTPAuthorizationCredentials, Depends(bearer_scheme)],
+):
+    """Revoke all of the caller's refresh tokens and clear the cookie.
+
+    Accepts an access token (Authorization header). Clearing the cookie matters
+    even though the tokens are also revoked server-side: it stops the browser
+    from re-presenting a now-dead cookie on every subsequent /refresh.
+    """
     from app.core.security import TOKEN_TYPE_ACCESS
 
     payload = decode_token(credentials.credentials, TOKEN_TYPE_ACCESS)
     revoke_all_user_tokens(payload.get("sub", ""))
+    _clear_refresh_cookie(response)
     return {"detail": "Logged out"}
