@@ -32,30 +32,49 @@ The script counts 429s in a dedicated `dw_rate_limited` metric with a
 a capacity or error-rate problem. **If `dw_rate_limited` is non-zero, the rest
 of the numbers are meaningless.**
 
-### The LLM cache dominates any long run
+### The LLM cache decides what your latency numbers mean (`CACHE_MODE`)
 
-`QUESTIONS` holds **5 fixed questions** asked against **one fixed dataset**, and
-the LLM cache is keyed on `LLM_MODEL + prompt` (`app/nl2sql/cache.py`). After
-the first handful of iterations every query is a cache hit, so a long run
-measures cache lookups rather than inference.
-
-The effect is not subtle. Measured on the same stack on 2026-07-21:
+The LLM cache is keyed on `LLM_MODEL + prompt` (`app/nl2sql/cache.py`), so a run
+that repeats questions stops reaching the model and starts measuring cache
+lookups. The effect is not subtle — measured on the same stack on 2026-07-21:
 
 | Condition | Query p95 |
 |---|---|
 | Cold cache, 3 VUs | **38.3s** |
 | Warm cache, 2 VUs | **61ms** |
 
-Both are "correct" — they just answer different questions:
+Both are "correct"; they answer different questions. Warm cache is the realistic
+steady state (real users repeat questions). Cold cache is the worst case that
+sizes your LLM capacity.
 
-- **Warm cache** is a realistic steady state (real users do repeat questions)
-  and is what you get by default.
-- **Cold cache** is the worst case that actually sizes your LLM capacity. To
-  measure it, run the target stack with `LLM_CACHE_ENABLED=false`.
+Declare which one you are measuring with `CACHE_MODE`, and the run **verifies
+it** against the server's own `llm_cache_{hits,misses}_total` counters rather
+than taking your word for it (issue #26):
 
-Always record which mode a baseline was taken in — a warm-cache number compared
-against a cold-cache number is meaningless. Cross-check with the
-`llm_cache_hits_total` Prometheus counter if you're unsure what you measured.
+| `CACHE_MODE` | Means | Enforced by |
+|---|---|---|
+| `auto` (default) | No claim. Reports the hit ratio it observed. | nothing — reporting only |
+| `cold` | "This measures LLM capacity." | `dw_cache_hit_ratio < 0.05` |
+| `warm` | "This measures cached steady state." | `dw_cache_hit_ratio > 0.5` |
+
+k6 cannot turn the cache off from the outside, so **`CACHE_MODE=cold` also needs
+`LLM_CACHE_ENABLED=false` on the target stack**. If you forget, the run fails on
+`dw_cache_hit_ratio` and says so by name instead of publishing a fantasy number:
+
+```
+CACHE MODE: cold — 36.0% of 25 LLM lookups served from cache (16 reached the model).
+THIS RUN DID NOT MEASURE WHAT IT CLAIMED. …
+```
+
+Every run ends with that `CACHE MODE:` line whatever the mode. **Record it with
+the baseline** — a warm number and a cold number are not comparable.
+
+The question pool is 20 questions and each VU starts at a different offset, so a
+short run no longer goes warm within seconds by accident. That widens the window;
+it does not replace `LLM_CACHE_ENABLED=false` for a true cold measurement.
+
+Verification requires `/metrics` on the target (`METRICS_ENABLED=true`, the
+default). Without it the run still works, prints a warning, and asserts nothing.
 
 ### Quotas will also stop a long campaign
 
@@ -93,6 +112,8 @@ k6 run loadtest/k6-login-upload-query.js
 | `DURATION` | `2m` | Steady-state hold time (excludes 30s ramp-up + 20s ramp-down). |
 | `QUERIES_PER_VU` | `5` | Questions each VU asks per iteration. |
 | `SLEEP` | `1` | Think-time (seconds) between requests. |
+| `CACHE_MODE` | `auto` | `auto` \| `cold` \| `warm` — see above. Verified against the server's cache counters. |
+| `METRICS_URL` | `$BASE_URL/metrics` | Where to read the cache counters, if `/metrics` is elsewhere. |
 
 ### Quick smoke (CI / pre-merge)
 
@@ -100,6 +121,14 @@ A short, low-concurrency run to catch regressions without a big cluster:
 
 ```bash
 VUS=3 DURATION=30s QUERIES_PER_VU=2 \
+k6 run loadtest/k6-login-upload-query.js
+```
+
+### Capacity run (what sizes your LLM hardware)
+
+```bash
+# On the target stack: LLM_CACHE_ENABLED=false
+CACHE_MODE=cold VUS=10 DURATION=5m \
 k6 run loadtest/k6-login-upload-query.js
 ```
 
@@ -115,6 +144,7 @@ Encoded in `options.thresholds`; the run fails if any is breached:
 | `dw_login_duration` | p95 `< 1.5s` |
 | `dw_upload_duration` | p95 `< 3s` |
 | `dw_query_duration` | p95 `< 8s` (LLM-bound; tune to your GPU/CPU) |
+| `dw_cache_hit_ratio` | only when `CACHE_MODE` is `cold` (`< 0.05`) or `warm` (`> 0.5`) — the run must have measured what it claimed |
 
 The query threshold is deliberately hardware-dependent — the LLM call dominates.
 Record the observed numbers as your **baseline** (below) and tighten from there.
@@ -152,7 +182,8 @@ Date:          2026-07-21
 Commit:        9dceca8 (script fixes applied on top)
 Environment:   dev laptop, single uvicorn worker, SQLite,
                Ollama llama3.2:3b on CPU, same machine as the generator
-Cache:         cold (first run against a fresh stack)
+Cache:         cold (first run against a fresh stack — asserted by hand;
+               CACHE_MODE did not exist yet)
 Peak VUs:      3
 Query p95:     38.3s      (median 10.2s, max 43.6s)
 Upload p95:    373ms
@@ -172,3 +203,19 @@ What this run does and doesn't establish:
 
 The 8s query threshold remains **unvalidated**. Do not tune it to match numbers
 from hardware like the above — run against staging and set it from there.
+
+### 2026-07-23 — `CACHE_MODE` verification (NOT a baseline either)
+
+Short runs on the same dev laptop, purely to prove the cache-mode machinery
+does what it claims. No capacity conclusions:
+
+| Run | Target | Observed hit ratio | `dw_cache_hit_ratio` |
+|---|---|---|---|
+| `CACHE_MODE=auto` | cache on, fresh | 0% (1 lookup) | not asserted |
+| `CACHE_MODE=cold` | cache **on** (the mistake) | 36% → 97% | ✗ **run failed, exit 99** |
+| `CACHE_MODE=cold` | `LLM_CACHE_ENABLED=false` | 0% (7 lookups) | ✓ passed |
+
+So the failure mode the issue describes — publishing a warm-cache number as if
+it were capacity — now stops the run instead of producing a plausible-looking
+figure. `dw_query_duration` still breached on this hardware, as expected and as
+recorded above.
