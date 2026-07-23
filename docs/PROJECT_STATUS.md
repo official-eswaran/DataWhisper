@@ -18,7 +18,7 @@ work is operational/business — see [GO_LIVE_CHECKLIST.md](GO_LIVE_CHECKLIST.md
 | Backend tests | **164 passing**, `ruff` clean |
 | Frontend | Vite build OK, **15 Vitest tests** passing, runtime `npm audit` clean |
 | E2E | Playwright full-flow smoke (**verified locally**, not yet run in CI) — `frontend/e2e/` |
-| Migrations | Head is `f4a2c07be913` (upload shape stats) |
+| Migrations | Head is `a81e5f30c6d2` (signed audit checkpoints) |
 | Open issues | **#5 only** (go-live checklist — non-code) |
 
 ### What shipped (all merged to `master`)
@@ -93,6 +93,14 @@ Things that are easy to miss when reading the code cold:
   unaffected. Don't "fix" them appearing inactive locally.
 - **The audit log is a hash chain.** Editing/reordering/deleting rows breaks
   it; `/api/audit/verify` detects that. Don't write to `audit_logs` directly.
+  Verification comes in two scopes (issue #30). `full=true` (the default) walks
+  the whole chain — the answer an audit needs, cost linear in history.
+  `full=false` verifies only entries after the newest **signed** checkpoint
+  (`audit_checkpoints`, HMAC'd with `SECRET_KEY`, written every
+  `AUDIT_CHECKPOINT_INTERVAL` appends), which bounds the work but is blind to
+  tampering older than that anchor. The response always reports its own `scope`
+  and `verified_from_id`, so the two can't be confused. Keep running a full
+  verify periodically; incremental is for the frequent check, not the audit.
 - **Tokens: refresh in an httpOnly cookie, access in memory only (issue #22).**
   `/api/auth/*` set a `dw_refresh` cookie (httpOnly, SameSite=Lax, Secure when
   `DEBUG=false`, path `/api/auth`); the refresh token is never in the JSON body

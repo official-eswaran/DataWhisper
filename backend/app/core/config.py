@@ -110,6 +110,13 @@ class Settings(BaseSettings):
     # turns the warning into a refusal to start (issue #29). The k8s manifests do.
     REQUIRE_SHARED_STATE: bool = False
 
+    # ── Audit chain ─────────────────────────────────────────────────────────────
+    # Sign a chain checkpoint every N entries so verification can be bounded to
+    # "everything since the last checkpoint" instead of a full linear re-walk
+    # (issue #30). Smaller = cheaper incremental verifies, more signed rows.
+    # 0 disables checkpointing entirely (verification is then always full).
+    AUDIT_CHECKPOINT_INTERVAL: int = 1000
+
     # ── Observability ───────────────────────────────────────────────────────────
     LOG_JSON: bool = False          # structured JSON logs (for shipping to Loki/ELK)
     METRICS_ENABLED: bool = True    # expose Prometheus /metrics

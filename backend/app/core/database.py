@@ -17,6 +17,7 @@ independent of this metadata DB.
 from __future__ import annotations
 
 import hashlib
+import hmac
 import logging
 import re
 import secrets
@@ -116,7 +117,26 @@ audit_chain_state = Table(
     "audit_chain_state", metadata,
     Column("org_id", Integer, primary_key=True),
     Column("last_hash", String(64), nullable=False),
+    # Running entry count — drives periodic checkpointing without a COUNT(*).
+    Column("entries", BigInteger, nullable=False, default=0),
     Column("updated_at", DateTime(timezone=True), server_default=func.now()),
+)
+
+# Signed chain checkpoints (issue #30). Each row certifies "at audit_logs.id =
+# last_id the chain head was last_hash", signed with the app's SECRET_KEY. That
+# signature is what makes bounded verification meaningful: without it, verifying
+# only recent entries would anchor on a hash an attacker with DB access could
+# have rewritten. Written at append time, so the signed value is the head the
+# process itself just computed — O(1), and correct by construction.
+audit_checkpoints = Table(
+    "audit_checkpoints", metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("org_id", Integer, nullable=False),
+    Column("last_id", Integer, nullable=False),        # audit_logs.id at checkpoint
+    Column("last_hash", String(64), nullable=False),
+    Column("entries", BigInteger, nullable=False, default=0),
+    Column("signature", String(64), nullable=False),
+    Column("created_at", DateTime(timezone=True), server_default=func.now()),
 )
 
 refresh_tokens = Table(
@@ -174,6 +194,7 @@ Index("ix_audit_org_created", audit_logs.c.org_id, audit_logs.c.created_at)
 Index("ix_audit_session", audit_logs.c.session_id)
 Index("ix_refresh_user", refresh_tokens.c.username)
 Index("ix_refresh_expires", refresh_tokens.c.expires_at)
+Index("ix_audit_ckpt_org_last", audit_checkpoints.c.org_id, audit_checkpoints.c.last_id)
 
 VALID_ROLES = {"owner", "admin", "member"}
 ADMIN_ROLES = {"owner", "admin"}
@@ -193,6 +214,22 @@ def _audit_entry_hash(
         natural_query or "", generated_sql or "", result_summary or "", status or "", event_ts,
     ])
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _checkpoint_signature(org_id: int, last_id: int, last_hash: str, entries: int) -> str:
+    """HMAC over a checkpoint, keyed on SECRET_KEY.
+
+    A checkpoint is only useful as a verification anchor if it can't be forged
+    by whoever can edit the rows it certifies. Anyone with DB access can rewrite
+    audit_logs *and* recompute a consistent chain; what they cannot do without
+    the app secret is produce this signature. So a bounded verify that starts
+    from a signed checkpoint is still tamper-evident, while one that started
+    from an unsigned row would not be.
+    """
+    payload = "\x1f".join([str(org_id), str(last_id), last_hash, str(entries)])
+    return hmac.new(
+        settings.SECRET_KEY.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256
+    ).hexdigest()
 
 
 # ── Engine ────────────────────────────────────────────────────────────────────
@@ -499,7 +536,7 @@ def write_audit_log(
     event_ts = _now().strftime("%Y-%m-%dT%H:%M:%S.%fZ")
     with get_engine().begin() as conn:
         state = conn.execute(
-            select(audit_chain_state.c.last_hash)
+            select(audit_chain_state.c.last_hash, audit_chain_state.c.entries)
             .where(audit_chain_state.c.org_id == org_id)
             .with_for_update()
         ).first()
@@ -509,43 +546,168 @@ def write_audit_log(
             prev_hash, org_id, username, session_id, natural_query,
             generated_sql, result_summary, status, event_ts,
         )
-        conn.execute(insert(audit_logs).values(
+        result = conn.execute(insert(audit_logs).values(
             org_id=org_id, username=username, session_id=session_id,
             natural_query=natural_query, generated_sql=generated_sql,
             result_summary=result_summary, status=status,
             event_ts=event_ts, prev_hash=prev_hash, entry_hash=entry_hash,
         ))
+        entries = (state.entries if state else 0) + 1
         if state:
             conn.execute(
                 update(audit_chain_state).where(audit_chain_state.c.org_id == org_id)
-                .values(last_hash=entry_hash, updated_at=_now())
+                .values(last_hash=entry_hash, entries=entries, updated_at=_now())
             )
         else:
-            conn.execute(insert(audit_chain_state).values(org_id=org_id, last_hash=entry_hash))
+            conn.execute(insert(audit_chain_state).values(
+                org_id=org_id, last_hash=entry_hash, entries=entries
+            ))
+
+        # Periodic signed checkpoint so verification stays bounded (issue #30).
+        # Inside the same transaction and the same lock as the append, so the
+        # signed head can't race another writer.
+        interval = settings.AUDIT_CHECKPOINT_INTERVAL
+        if interval > 0 and entries % interval == 0:
+            entry_id = result.inserted_primary_key[0]
+            conn.execute(insert(audit_checkpoints).values(
+                org_id=org_id, last_id=entry_id, last_hash=entry_hash,
+                entries=entries,
+                signature=_checkpoint_signature(org_id, entry_id, entry_hash, entries),
+            ))
 
 
-def verify_audit_chain(org_id: int) -> dict:
-    """Recompute the org's audit hash chain and report integrity."""
+def latest_audit_checkpoint(org_id: int, at_or_before_id: int | None = None) -> dict | None:
+    """Newest signed checkpoint for an org, optionally at or before an entry id.
+
+    Returns ``None`` when there is no checkpoint, and marks ``signature_valid``
+    False rather than hiding a forged one — a checkpoint that fails its HMAC is
+    itself evidence of tampering and must not be used as an anchor.
+    """
+    stmt = select(audit_checkpoints).where(audit_checkpoints.c.org_id == org_id)
+    if at_or_before_id is not None:
+        stmt = stmt.where(audit_checkpoints.c.last_id <= at_or_before_id)
     with get_engine().connect() as conn:
-        rows = conn.execute(
-            select(audit_logs).where(audit_logs.c.org_id == org_id).order_by(audit_logs.c.id.asc())
-        ).all()
+        row = conn.execute(stmt.order_by(audit_checkpoints.c.last_id.desc()).limit(1)).first()
+    if row is None:
+        return None
+    expected = _checkpoint_signature(row.org_id, row.last_id, row.last_hash, row.entries)
+    return {
+        "last_id": row.last_id,
+        "last_hash": row.last_hash,
+        "entries": int(row.entries),
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "signature_valid": hmac.compare_digest(row.signature, expected),
+    }
+
+
+def verify_audit_chain(org_id: int, full: bool = True, since_id: int | None = None) -> dict:
+    """Recompute an org's audit hash chain and report integrity.
+
+    ``full=True`` (the default, and what a compliance answer needs) walks the
+    whole chain from genesis: O(entries), which is what issue #30 is about.
+
+    ``full=False`` verifies only the entries after the newest signed checkpoint,
+    anchoring on the hash that checkpoint certifies. Cost is bounded by the
+    checkpoint interval rather than by total history. The trade is stated in the
+    response, not buried: ``scope``, ``verified_from_id`` and
+    ``unverified_before_id`` say exactly how much of the chain the ``valid``
+    flag covers, so an incremental pass can never be mistaken for a full audit.
+    Tampering with entries older than the anchor is invisible to it — run a full
+    verify (nightly / on demand) to catch that.
+
+    ``since_id`` narrows further, to the newest checkpoint at or before that id.
+    """
+    anchor_hash = GENESIS_HASH
+    anchor_id: int | None = None
+    checkpoint: dict | None = None
+    scope = "full"
+
+    if not full:
+        checkpoint = latest_audit_checkpoint(org_id, at_or_before_id=since_id)
+        if checkpoint and not checkpoint["signature_valid"]:
+            # A forged or edited checkpoint is a finding in its own right.
+            return {
+                "valid": False, "entries": 0, "broken_at": "checkpoint",
+                "scope": "checkpoint", "verified_from_id": None,
+                "unverified_before_id": None, "checkpoint": checkpoint,
+                "detail": "Checkpoint signature does not verify — it was not "
+                          "written by this application.",
+            }
+        if checkpoint:
+            anchor_hash = checkpoint["last_hash"]
+            anchor_id = checkpoint["last_id"]
+            scope = "incremental"
+        else:
+            scope = "full"  # nothing to anchor on yet; a full walk is the honest answer
+
+    stmt = select(audit_logs).where(audit_logs.c.org_id == org_id)
+    if anchor_id is not None:
+        stmt = stmt.where(audit_logs.c.id > anchor_id)
+    with get_engine().connect() as conn:
+        rows = conn.execute(stmt.order_by(audit_logs.c.id.asc())).all()
         head = conn.execute(
             select(audit_chain_state.c.last_hash).where(audit_chain_state.c.org_id == org_id)
         ).scalar()
 
-    prev = GENESIS_HASH
+    def _result(valid: bool, broken_at) -> dict:
+        return {
+            "valid": valid,
+            "entries": len(rows),          # entries actually checked
+            "broken_at": broken_at,
+            "scope": scope,
+            "verified_from_id": anchor_id,
+            "unverified_before_id": anchor_id,
+            "checkpoint": checkpoint,
+        }
+
+    prev = anchor_hash
     for r in rows:
         expected = _audit_entry_hash(
             prev, r.org_id, r.username, r.session_id, r.natural_query,
             r.generated_sql, r.result_summary, r.status, r.event_ts,
         )
         if r.prev_hash != prev or r.entry_hash != expected:
-            return {"valid": False, "entries": len(rows), "broken_at": r.id}
+            return _result(False, r.id)
         prev = r.entry_hash
 
-    head_ok = (head is None and not rows) or (head == prev)
-    return {"valid": head_ok, "entries": len(rows), "broken_at": None if head_ok else "head"}
+    # ``prev`` is the anchor when no rows were in scope, so this covers all three
+    # cases: a chain with no state row yet, nothing new since the checkpoint (the
+    # head must still be the anchor), and the normal "head is the last entry".
+    head_ok = (head is None and not rows) or head == prev
+    return _result(head_ok, None if head_ok else "head")
+
+
+def write_audit_checkpoint(org_id: int) -> dict:
+    """Sign the current chain head, after verifying everything since the last one.
+
+    Refuses to certify a chain it can't verify — a checkpoint over corrupt
+    history would launder the corruption into every later bounded verify.
+    """
+    verdict = verify_audit_chain(org_id, full=False)
+    if not verdict["valid"]:
+        return {"created": False, "reason": "chain does not verify", "verification": verdict}
+
+    with get_engine().begin() as conn:
+        state = conn.execute(
+            select(audit_chain_state.c.last_hash, audit_chain_state.c.entries)
+            .where(audit_chain_state.c.org_id == org_id)
+            .with_for_update()
+        ).first()
+        if state is None:
+            return {"created": False, "reason": "no audit entries yet"}
+        last_id = conn.execute(
+            select(func.max(audit_logs.c.id)).where(audit_logs.c.org_id == org_id)
+        ).scalar()
+        if last_id is None:
+            return {"created": False, "reason": "no audit entries yet"}
+        entries = int(state.entries)
+        conn.execute(insert(audit_checkpoints).values(
+            org_id=org_id, last_id=last_id, last_hash=state.last_hash, entries=entries,
+            signature=_checkpoint_signature(org_id, last_id, state.last_hash, entries),
+        ))
+    return {
+        "created": True, "last_id": last_id, "last_hash": state.last_hash, "entries": entries
+    }
 
 
 def fetch_audit_logs(org_id: int, limit: int, offset: int) -> tuple[list[dict], int]:
@@ -670,6 +832,7 @@ def delete_organization(org_id: int) -> dict:
         ).scalar()
         conn.execute(delete(audit_logs).where(audit_logs.c.org_id == org_id))
         conn.execute(delete(audit_chain_state).where(audit_chain_state.c.org_id == org_id))
+        conn.execute(delete(audit_checkpoints).where(audit_checkpoints.c.org_id == org_id))
         conn.execute(delete(refresh_tokens).where(refresh_tokens.c.org_id == org_id))
         conn.execute(delete(usage_counters).where(usage_counters.c.org_id == org_id))
         conn.execute(delete(users).where(users.c.org_id == org_id))
