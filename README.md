@@ -1,5 +1,14 @@
 # DataWhisper — Private AI Data Assistant
 
+[![CI](https://github.com/official-eswaran/DataWhisper/actions/workflows/ci.yml/badge.svg)](https://github.com/official-eswaran/DataWhisper/actions/workflows/ci.yml)
+[![E2E](https://github.com/official-eswaran/DataWhisper/actions/workflows/e2e.yml/badge.svg)](https://github.com/official-eswaran/DataWhisper/actions/workflows/e2e.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-22D3EE.svg?style=flat-square)](LICENSE)
+![Python](https://img.shields.io/badge/Python-3.12-3776AB?style=flat-square&logo=python&logoColor=white)
+![React](https://img.shields.io/badge/React-19-61DAFB?style=flat-square&logo=react&logoColor=black)
+![DuckDB](https://img.shields.io/badge/DuckDB-FFF000?style=flat-square&logo=duckdb&logoColor=black)
+![Ollama](https://img.shields.io/badge/Ollama-local_LLM-000000?style=flat-square&logo=ollama&logoColor=white)
+![Kubernetes](https://img.shields.io/badge/Kubernetes-ready-326CE5?style=flat-square&logo=kubernetes&logoColor=white)
+
 > Upload your data. Ask in plain English. Get answers as tables, charts & numbers — **100% offline, zero data leakage.**
 
 DataWhisper is a full-stack application that lets CEOs, managers, and business users query their data using natural language. It converts plain English questions into SQL, executes them on your private data, and returns results with auto-visualizations — all running locally on your machine using Ollama.
