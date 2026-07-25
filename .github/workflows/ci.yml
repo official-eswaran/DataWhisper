@@ -58,8 +58,37 @@ jobs:
       - name: Dependency audit (shipped/runtime deps only)
         # The frontend ships a static build, so only runtime deps matter; the
         # dev toolchain (Vite/Vitest) is excluded. Fails on high/critical
-        # runtime advisories.
-        run: npm audit --omit=dev --audit-level=high
+        # runtime advisories that are not explicitly allowlisted below.
+        #
+        # ALLOWLIST — GHSA-qwww-vcr4-c8h2 (react-router, RSC-mode CSRF bypass)
+        #
+        # There is currently no clean react-router 7.x. Versions below 7.12.0
+        # carry 14 high advisories including an unauthenticated RCE via the
+        # vendored turbo-stream; 7.12.0-8.2.0 carry this single one. We pin the
+        # newest (^7.18.1) and accept this advisory because it only affects RSC
+        # mode, and this app is a Vite SPA using BrowserRouter — no RSC, no
+        # server actions. Everything else still fails the build.
+        #
+        # Re-check when a fixed release lands above 8.2.0, then drop the entry.
+        run: |
+          npm audit --omit=dev --json > audit.json || true
+          node -e '
+            const a = JSON.parse(require("fs").readFileSync("audit.json", "utf8"));
+            const ALLOW = new Set(["GHSA-qwww-vcr4-c8h2"]);
+            const ids = new Set();
+            for (const v of Object.values(a.vulnerabilities ?? {})) {
+              if (!["high", "critical"].includes(v.severity)) continue;
+              for (const via of v.via ?? []) {
+                if (typeof via === "object" && via.url) ids.add(via.url.split("/").pop());
+              }
+            }
+            const unlisted = [...ids].filter((id) => !ALLOW.has(id));
+            if (unlisted.length) {
+              console.error("Unallowlisted high/critical advisories:\n  " + unlisted.join("\n  "));
+              process.exit(1);
+            }
+            console.log("Audit gate passed. Allowlisted and reviewed: " + [...ALLOW].join(", "));
+          '
 
   images:
     name: Images — build & scan

@@ -26,3 +26,5 @@ htmlcov/
 .ruff_cache/
 *.egg-info/
 backups/
+
+audit.json
