@@ -72,14 +72,14 @@ jobs:
         run: docker build -t datawhisper-frontend:${{ github.sha }} ./frontend
 
       - name: Scan backend image (Trivy)
-        uses: aquasecurity/trivy-action@0.24.0
+        uses: aquasecurity/trivy-action@0.35.0
         with:
           image-ref: datawhisper-backend:${{ github.sha }}
           severity: "HIGH,CRITICAL"
           ignore-unfixed: true
           exit-code: "1"
       - name: Scan frontend image (Trivy)
-        uses: aquasecurity/trivy-action@0.24.0
+        uses: aquasecurity/trivy-action@0.35.0
         with:
           image-ref: datawhisper-frontend:${{ github.sha }}
           severity: "HIGH,CRITICAL"
