@@ -40,7 +40,11 @@ def generate_summary(question: str, df: pd.DataFrame) -> str:
         col = df.columns[0]
         if isinstance(val, float):
             formatted = f"{val:,.2f}"
-        elif isinstance(val, int):
+        elif pd.api.types.is_integer(val):
+            # NOT isinstance(val, int): pandas hands back numpy.int64, which
+            # does not subclass int, so that check silently never fired and
+            # integer scalars lost their thousands separators. (numpy.float64
+            # *does* subclass float, which is why the float branch looked fine.)
             formatted = f"{val:,}"
         else:
             formatted = str(val)

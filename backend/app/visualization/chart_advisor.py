@@ -33,17 +33,30 @@ _DATE_NAME_RE = re.compile(
 # Column names that represent individual entity identifiers — named lists
 # should render as table, not bar/pie
 _NAME_COL_RE = re.compile(
-    r"\b(name|emp_name|employee|person|user|customer|client|contact|"
-    r"full_name|first_name|last_name|fname|lname|username|title|label)\b",
+    r"\b(name|emp|employee|person|user|customer|client|contact|"
+    r"full|first|last|fname|lname|username|title|label)\b",
     re.IGNORECASE,
 )
 
-# Keywords in the question that hint at a specific chart
+# Keywords in the question that hint at a specific chart. Stems carry \w* rather
+# than \b so inflections match — "correlated"/"correlation", "accumulated" —
+# which a bare \b after the stem can never do.
 _TREND_WORDS = re.compile(r"\b(trend|over time|by year|by month|by week|over the|growth|change)\b", re.IGNORECASE)
-_DIST_WORDS  = re.compile(r"\b(distribution|spread|range|histogram|frequency|how.*distribut)\b", re.IGNORECASE)
-_CORR_WORDS  = re.compile(r"\b(correlat|relationship|vs\.?|versus|scatter|compare.*with)\b", re.IGNORECASE)
+_DIST_WORDS  = re.compile(r"\b(distribution|spread|range|histogram|frequency|how.*distribut\w*)", re.IGNORECASE)
+_CORR_WORDS  = re.compile(r"\b(correlat\w*|relationship|vs\.?|versus|scatter|compare.*with)\b", re.IGNORECASE)
 _SHARE_WORDS = re.compile(r"\b(share|percent|proportion|breakdown|composition|ratio|split)\b", re.IGNORECASE)
-_CUM_WORDS   = re.compile(r"\b(cumulative|running total|running sum|accumulat)\b", re.IGNORECASE)
+_CUM_WORDS   = re.compile(r"\b(cumulative|running total|running sum|accumulat\w*)\b", re.IGNORECASE)
+
+
+def _name_words(column: str) -> str:
+    """Column name with separators turned into spaces, for \\b-based matching.
+
+    SQL columns are overwhelmingly snake_case, and ``_`` is a word character —
+    so ``\\b(date)\\b`` never matches ``order_date`` and ``\\b(name)\\b`` never
+    matches ``customer_name``. Matching against the split form is what makes
+    these heuristics fire on the names they were written for.
+    """
+    return re.sub(r"[^A-Za-z0-9]+", " ", column or "")
 
 
 def _is_datetime_col(series) -> bool:
@@ -117,7 +130,7 @@ def recommend_chart_type(df, question: str = "") -> str:
     # ── Exactly two columns: label + value ───────────────────────────────────
     if cols == 2 and n_numeric >= 1:
         label_col = category_cols[0] if category_cols else df.columns[0]
-        is_time   = _is_datetime_col(df[label_col]) or bool(_DATE_NAME_RE.search(label_col))
+        is_time   = _is_datetime_col(df[label_col]) or bool(_DATE_NAME_RE.search(_name_words(label_col)))
 
         # Cumulative / area hint
         if _CUM_WORDS.search(question) and is_time:
@@ -140,7 +153,7 @@ def recommend_chart_type(df, question: str = "") -> str:
             distinct = df[label_col].nunique()
             # Named-entity columns (emp_name, customer_name, etc.) with many
             # distinct values are ranked / filtered lists → always render as table
-            if _NAME_COL_RE.search(label_col) and distinct > 5:
+            if _NAME_COL_RE.search(_name_words(label_col)) and distinct > 5:
                 return "table"
             # Pie for share-hint questions (any size ≤8) or very small sets (≤3)
             if _SHARE_WORDS.search(question) and distinct <= 8:
@@ -156,7 +169,7 @@ def recommend_chart_type(df, question: str = "") -> str:
     # ── 3+ columns with one label + multiple numeric → multi_series ──────────
     if n_category == 1 and n_numeric >= 2:
         label_col = category_cols[0]
-        is_time   = _is_datetime_col(df[label_col]) or bool(_DATE_NAME_RE.search(label_col))
+        is_time   = _is_datetime_col(df[label_col]) or bool(_DATE_NAME_RE.search(_name_words(label_col)))
         if is_time or _TREND_WORDS.search(question):
             return "multi_series"   # will render as multi-line
         return "multi_series"       # will render as grouped bar
@@ -165,7 +178,7 @@ def recommend_chart_type(df, question: str = "") -> str:
     if n_category == 0 and n_numeric >= 2:
         # One of the "numeric" cols may have a time-like name (e.g. month, year
         # extracted with EXTRACT()) — promote it to the label and use line chart
-        time_like = [c for c in numeric_cols if _DATE_NAME_RE.search(c)]
+        time_like = [c for c in numeric_cols if _DATE_NAME_RE.search(_name_words(c))]
         if time_like:
             value_cols = [c for c in numeric_cols if c not in time_like]
             if len(value_cols) == 1:
