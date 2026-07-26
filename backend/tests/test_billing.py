@@ -288,3 +288,94 @@ def test_portal_requires_existing_customer(monkeypatch):
     monkeypatch.setattr(settings, "STRIPE_SECRET_KEY", "sk_test_x")
     with pytest.raises(ValueError, match="no Stripe customer"):
         billing.create_portal_session(org_id)
+
+
+# ── Route happy paths (issue #28: this is the payment code, it needs cover) ────
+
+def _enable(monkeypatch):
+    monkeypatch.setattr(settings, "STRIPE_SECRET_KEY", "sk_test_x")
+    monkeypatch.setattr(settings, "STRIPE_WEBHOOK_SECRET", "whsec_test")
+
+
+def test_checkout_route_returns_the_redirect_url(client, admin_token, monkeypatch):
+    _enable(monkeypatch)
+    monkeypatch.setattr(
+        billing, "create_checkout_session",
+        lambda **kw: "https://checkout.stripe.com/c/session_123",
+    )
+    r = client.post(
+        "/api/billing/checkout",
+        headers={"Authorization": f"Bearer {admin_token}"},
+        json={"plan": "pro"},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["checkout_url"].startswith("https://checkout.stripe.com/")
+
+
+def test_checkout_route_surfaces_configuration_errors_as_400(client, admin_token, monkeypatch):
+    """A missing price id is the operator's mistake, not a server fault."""
+    _enable(monkeypatch)
+
+    def boom(**kw):
+        raise ValueError("No Stripe price configured for plan 'pro'")
+
+    monkeypatch.setattr(billing, "create_checkout_session", boom)
+    r = client.post(
+        "/api/billing/checkout",
+        headers={"Authorization": f"Bearer {admin_token}"},
+        json={"plan": "pro"},
+    )
+    assert r.status_code == 400
+    assert "No Stripe price" in r.json()["detail"]
+
+
+def test_portal_route_returns_the_portal_url(client, admin_token, monkeypatch):
+    _enable(monkeypatch)
+    monkeypatch.setattr(
+        billing, "create_portal_session", lambda org_id: "https://billing.stripe.com/p/session_1"
+    )
+    r = client.post("/api/billing/portal", headers={"Authorization": f"Bearer {admin_token}"})
+    assert r.status_code == 200, r.text
+    assert r.json()["portal_url"].startswith("https://billing.stripe.com/")
+
+
+def test_portal_route_requires_a_customer(client, admin_token, monkeypatch):
+    _enable(monkeypatch)
+
+    def boom(org_id):
+        raise ValueError("Organization has no Stripe customer")
+
+    monkeypatch.setattr(billing, "create_portal_session", boom)
+    r = client.post("/api/billing/portal", headers={"Authorization": f"Bearer {admin_token}"})
+    assert r.status_code == 400
+
+
+def test_portal_route_requires_owner(client, manager_token, monkeypatch):
+    _enable(monkeypatch)
+    r = client.post("/api/billing/portal", headers={"Authorization": f"Bearer {manager_token}"})
+    assert r.status_code == 403
+
+
+def test_portal_route_503_when_billing_is_off(client, admin_token):
+    r = client.post("/api/billing/portal", headers={"Authorization": f"Bearer {admin_token}"})
+    assert r.status_code == 503
+
+
+def test_webhook_route_processes_a_verified_event(client, monkeypatch):
+    """The only path that may change entitlements — signature verified, then handled."""
+    _enable(monkeypatch)
+    monkeypatch.setattr(billing, "verify_event", lambda payload, sig: {"type": "ping", "id": "e1"})
+    monkeypatch.setattr(billing, "handle_event", lambda event: "ignored")
+
+    r = client.post(
+        "/api/billing/webhook",
+        content=b"{}",
+        headers={"stripe-signature": "t=1,v1=deadbeef"},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json() == {"received": True, "result": "ignored"}
+
+
+def test_webhook_route_503_when_billing_is_off(client):
+    r = client.post("/api/billing/webhook", content=b"{}")
+    assert r.status_code == 503
