@@ -68,3 +68,45 @@ def test_shipped_register_limit_is_tight_and_separate():
     fields = type(settings).model_fields
     assert fields["RATE_LIMIT_REGISTER"].default == "5/hour"
     assert fields["RATE_LIMIT_LOGIN"].default.endswith("/minute")
+
+
+# ── 422 responses must not echo what was submitted ────────────────────────────
+# Pydantic's errors() carries an "input" key holding the rejected value, so
+# returning it verbatim put the submitted password in the response body of every
+# failed registration — visible to proxy logs, devtools, and any error tracker
+# capturing HTTP bodies.
+
+def test_validation_errors_never_echo_the_submitted_password(client):
+    # Long enough to pass the length rule but with no digit, so the validator
+    # rejects it and the handler has something to (not) echo back.
+    secret = "DoNotLeakThisSecret"
+    payload = _payload() | {"password": secret}
+    r = client.post("/api/auth/register", json=payload)
+
+    assert r.status_code == 422, r.text
+    assert secret not in r.text, "the submitted password came back in the 422 body"
+
+
+def test_validation_errors_expose_no_input_or_ctx_keys(client):
+    r = client.post("/api/auth/register", json=_payload() | {"password": "short"})
+    assert r.status_code == 422
+    for err in r.json()["errors"]:
+        assert set(err) == {"loc", "msg", "type"}, f"unexpected keys leaked: {err}"
+
+
+def test_validation_errors_still_say_which_field_and_why(client):
+    """Sanitising must not cost the client the information it needs."""
+    r = client.post("/api/auth/register", json=_payload() | {"password": "nodigitshere"})
+    assert r.status_code == 422
+    err = r.json()["errors"][0]
+    assert err["loc"][-1] == "password"
+    # And the message is shown as written, without Pydantic's "Value error, ".
+    assert err["msg"] == "Password must contain a digit"
+
+
+def test_login_validation_does_not_echo_the_password(client):
+    """The same handler covers login, where the leak would be just as bad."""
+    secret = "x" * 200  # over the 128-char cap, so the validator rejects it
+    r = client.post("/api/auth/login", json={"username": "ceo", "password": secret})
+    assert r.status_code == 422
+    assert secret not in r.text

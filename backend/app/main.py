@@ -102,10 +102,31 @@ async def _rate_limit_handler(request: Request, exc: RateLimitExceeded):
 # ── Consistent error envelopes (never leak internals) ─────────────────────────
 @app.exception_handler(RequestValidationError)
 async def _validation_handler(request: Request, exc: RequestValidationError):
-    # jsonable_encoder makes validator ctx (e.g. ValueError) JSON-safe.
+    """422 with the field and the reason — never the value that was submitted.
+
+    Pydantic's ``errors()`` carries an ``input`` key holding the rejected value,
+    so returning it verbatim put submitted passwords in the response body of
+    every failed registration or login. Anything that sees a response sees them:
+    proxy logs, browser devtools, an error tracker capturing HTTP bodies. Only
+    ``loc``/``msg``/``type`` are echoed, which is all a client needs to tell the
+    user which field is wrong and why.
+
+    ``ctx`` is dropped for the same reason — it can embed the original
+    ValueError, whose text is built from the input in some validators.
+    """
+    safe_errors = [
+        {
+            "loc": err.get("loc", []),
+            # Pydantic prefixes custom validator messages with "Value error, ";
+            # strip it so clients can show the message as written.
+            "msg": str(err.get("msg", "")).removeprefix("Value error, "),
+            "type": err.get("type", ""),
+        }
+        for err in exc.errors()
+    ]
     return JSONResponse(
         status_code=422,
-        content=jsonable_encoder({"detail": "Invalid request.", "errors": exc.errors()}),
+        content=jsonable_encoder({"detail": "Invalid request.", "errors": safe_errors}),
     )
 
 
