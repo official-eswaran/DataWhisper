@@ -21,8 +21,17 @@ function Signup({ onLogin }) {
     } catch (err) {
       const status = err?.response?.status;
       if (status === 409) toast.error("That username or email is already taken");
-      else if (status === 422) toast.error("Please check your details and try again");
-      else toast.error("Could not create your account");
+      else if (status === 422) {
+        // The API says exactly which field failed and why (e.g. "Password must
+        // contain a digit"). Showing that beats a generic "check your details",
+        // which left the user guessing — most often about the password rule.
+        const first = err?.response?.data?.errors?.[0]?.msg;
+        toast.error(first || "Please check your details and try again");
+      } else if (status === 403) {
+        toast.error("Public signup is closed on this deployment");
+      } else if (status === 429) {
+        toast.error("Too many signups from this network. Please try again later.");
+      } else toast.error("Could not create your account");
     } finally {
       setLoading(false);
     }
@@ -90,12 +99,20 @@ function Signup({ onLogin }) {
               id="password"
               name="password"
               type="password"
-              placeholder="Password (min 8 chars)"
+              placeholder="Password (10+ chars, with a letter and a number)"
               autoComplete="new-password"
               value={form.password}
               onChange={update("password")}
+              minLength={10}
               required
+              aria-describedby="password-help"
             />
+            {/* Must mirror validate_password_strength in core/security.py — it
+                said "min 8" while the backend enforced 10, so a valid-looking
+                password 422'd with no indication of why. */}
+            <span id="password-help" className="sr-only">
+              Password must be at least 10 characters and contain a letter and a number
+            </span>
           </div>
 
           <button type="submit" className="login-btn" disabled={loading} aria-busy={loading}>

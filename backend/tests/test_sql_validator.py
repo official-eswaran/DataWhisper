@@ -67,3 +67,33 @@ def test_db_level_lockdown_blocks_file_read(conn):
     itself refuses external file access."""
     with pytest.raises(duckdb.Error):
         conn.execute("SELECT * FROM read_csv('/etc/passwd')").fetchall()
+
+
+# ── REPLACE: a scalar function, not DDL ───────────────────────────────────────
+# REPLACE was on the keyword denylist to stop CREATE OR REPLACE, but it is also
+# a standard string function, so ordinary queries were rejected with "please
+# rephrase". These pin both halves: the function is allowed, and every dangerous
+# form stays blocked by a rule that never depended on that denylist entry.
+
+@pytest.mark.parametrize("sql", [
+    "SELECT REPLACE(city, 'St.', 'Saint') AS c FROM sales",
+    "SELECT regexp_replace(name, 'a', 'b') FROM sales",
+    "WITH x AS (SELECT REPLACE(city, ' ', '') AS c FROM sales) SELECT * FROM x",
+])
+def test_replace_as_a_string_function_is_allowed(sql):
+    assert is_safe_sql(sql) is True
+
+
+@pytest.mark.parametrize("sql,blocked_by", [
+    ("CREATE OR REPLACE TABLE t AS SELECT 1", "the CREATE keyword"),
+    ("INSERT OR REPLACE INTO t VALUES (1)", "the INSERT keyword"),
+    ("REPLACE INTO t VALUES (1)", "not starting with SELECT/WITH"),
+    ("SELECT 1; REPLACE INTO t VALUES (1)", "the stacked-statement ';' check"),
+])
+def test_dangerous_replace_forms_stay_blocked(sql, blocked_by):
+    assert is_safe_sql(sql) is False, f"should be rejected by {blocked_by}"
+
+
+def test_replace_query_survives_the_full_validate_path(conn):
+    sql = "SELECT REPLACE(region, 'North', 'N') AS r FROM sales"
+    assert validate_and_fix_sql(sql, conn) == sql

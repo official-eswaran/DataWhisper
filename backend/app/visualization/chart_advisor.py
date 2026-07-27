@@ -31,10 +31,17 @@ _DATE_NAME_RE = re.compile(
 )
 
 # Column names that represent individual entity identifiers — named lists
-# should render as table, not bar/pie
+# should render as table, not bar/pie.
+#
+# Matched against _name_words(), which is what makes the bare "name" alternative
+# reach employee_name / customer_name / full_name / first_name / last_name /
+# emp_name. Because it does, the stems themselves (emp, full, first, last) are
+# not needed here — and adding them would newly capture last_login, first_seen,
+# emp_id and full_amount, forcing perfectly chartable results to a table. Keep
+# entries to words that identify an entity on their own.
 _NAME_COL_RE = re.compile(
-    r"\b(name|emp|employee|person|user|customer|client|contact|"
-    r"full|first|last|fname|lname|username|title|label)\b",
+    r"\b(name|employee|person|user|customer|client|contact|"
+    r"fname|lname|username|title|label)\b",
     re.IGNORECASE,
 )
 

@@ -16,8 +16,20 @@ from __future__ import annotations
 import re
 
 # Write / DDL / admin operations — must never appear.
+#
+# REPLACE is deliberately NOT here. It is a standard scalar string function
+# (``SELECT REPLACE(city, 'St.', 'Saint')``), and blocking the bare word
+# rejected ordinary queries with an unhelpful "please rephrase". Every dangerous
+# form of the word is already caught by an independent rule that does not depend
+# on this list:
+#   CREATE OR REPLACE …   -> CREATE below
+#   INSERT OR REPLACE …   -> INSERT below
+#   REPLACE INTO …        -> does not start with SELECT/WITH (_SELECT_START_RE)
+#   SELECT 1; REPLACE …   -> the ';' rejection in is_safe_sql
+# so removing it costs no coverage. See test_sql_validator.py, which pins all
+# four of those.
 _FORBIDDEN_KEYWORDS = [
-    "DROP", "DELETE", "UPDATE", "INSERT", "ALTER", "CREATE", "TRUNCATE", "REPLACE",
+    "DROP", "DELETE", "UPDATE", "INSERT", "ALTER", "CREATE", "TRUNCATE",
     "GRANT", "REVOKE", "MERGE",
     # DuckDB write/exec/attach operations.
     "COPY", "EXPORT", "IMPORT", "ATTACH", "DETACH", "INSTALL", "LOAD",

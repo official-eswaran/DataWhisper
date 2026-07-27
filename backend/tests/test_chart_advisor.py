@@ -96,6 +96,33 @@ def test_named_entity_with_few_rows_still_charts():
     assert recommend_chart_type(df) == "pie"
 
 
+@pytest.mark.parametrize("label", [
+    "employee_name", "customer_name", "full_name", "first_name", "last_name",
+    "emp_name", "username", "contact",
+])
+def test_entity_columns_are_recognised_in_snake_case(label):
+    """_name_words() is what lets the bare 'name' alternative reach these.
+
+    Without the separator split, `\\b(name)\\b` cannot match `customer_name` —
+    `_` is a word character — so every one of these silently charted as a bar.
+    """
+    df = pd.DataFrame({label: [f"v{i}" for i in range(10)], "salary": list(range(10))})
+    assert recommend_chart_type(df) == "table"
+
+
+@pytest.mark.parametrize("label", [
+    "last_login", "first_seen", "emp_id", "full_amount", "last_status",
+])
+def test_stem_lookalike_columns_are_not_treated_as_entity_names(label):
+    """first/last/full/emp are not entity names on their own.
+
+    Widening _NAME_COL_RE to those bare stems would add nothing (the cases above
+    already match via 'name') while forcing these chartable results to a table.
+    """
+    df = pd.DataFrame({label: [f"v{i}" for i in range(10)], "total": list(range(10))})
+    assert recommend_chart_type(df) == "bar"
+
+
 # ── Wider results ──────────────────────────────────────────────────────────
 
 def test_label_plus_two_numerics_is_multi_series():

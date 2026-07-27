@@ -1,0 +1,85 @@
+# Automated dependency updates.
+#
+# This exists because the project sat idle and two CI gates went red on their
+# own — sentry-sdk (PYSEC-2026-1917) and react-router (GHSA-qwww-vcr4-c8h2) —
+# with no code change involved. Advisories accrue against pinned versions
+# whether or not anyone is committing, so the audit gates in ci.yml eventually
+# fail on any project that isn't watching. This is the part that watches.
+#
+# Grouping is deliberate: a PR per package would be noise, and the point is that
+# these get reviewed rather than rubber-stamped. Security updates are kept
+# ungrouped and separate so they are never buried in a routine bump PR.
+version: 2
+
+updates:
+  # ── Backend (pip) ───────────────────────────────────────────────────────────
+  - package-ecosystem: pip
+    directory: /backend
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels: [dependencies, backend]
+    groups:
+      # The OTel packages are version-locked to each other; splitting them
+      # across PRs produces combinations that don't resolve.
+      opentelemetry:
+        patterns: ["opentelemetry-*"]
+      backend-minor-and-patch:
+        patterns: ["*"]
+        exclude-patterns: ["opentelemetry-*"]
+        update-types: [minor, patch]
+    ignore:
+      # Majors move on their own schedule — they need a migration read, not an
+      # automated bump. Security advisories still come through regardless of
+      # this, because security updates ignore version-type filters.
+      - dependency-name: "*"
+        update-types: [version-update:semver-major]
+
+  # ── Frontend (npm) ──────────────────────────────────────────────────────────
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels: [dependencies, frontend]
+    groups:
+      react:
+        patterns: ["react", "react-dom", "react-router", "react-router-dom"]
+      build-toolchain:
+        patterns: ["vite", "vitest", "@vitejs/*", "@vitest/*", "jsdom"]
+      testing:
+        patterns: ["@testing-library/*", "@playwright/*"]
+      frontend-minor-and-patch:
+        patterns: ["*"]
+        update-types: [minor, patch]
+    ignore:
+      - dependency-name: "*"
+        update-types: [version-update:semver-major]
+
+  # ── CI actions ──────────────────────────────────────────────────────────────
+  # Pinned action versions go stale too, and a deprecated runner action fails
+  # the whole pipeline just as hard as a bad dependency.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    labels: [dependencies, ci]
+    groups:
+      actions:
+        patterns: ["*"]
+
+  # ── Container base images ───────────────────────────────────────────────────
+  # Trivy scans these in ci.yml; without updates it eventually reports base-image
+  # CVEs that no code change can fix.
+  - package-ecosystem: docker
+    directory: /backend
+    schedule:
+      interval: monthly
+    labels: [dependencies, docker]
+  - package-ecosystem: docker
+    directory: /frontend
+    schedule:
+      interval: monthly
+    labels: [dependencies, docker]
