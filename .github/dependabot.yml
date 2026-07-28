@@ -73,13 +73,34 @@ updates:
   # ── Container base images ───────────────────────────────────────────────────
   # Trivy scans these in ci.yml; without updates it eventually reports base-image
   # CVEs that no code change can fix.
+  #
+  # Majors are ignored here for the same reason as pip/npm, but the consequences
+  # are sharper: a base-image major changes the language runtime under the whole
+  # app. The first run of this config proposed python 3.12 -> 3.14 (which would
+  # have to find wheels for the pinned pandas/pyarrow/duckdb) and node 20 -> 26
+  # (Current, not LTS until 2026-10-28). A green `docker build` proves neither
+  # of those is safe — it does not run the test suite inside the new image.
+  #
+  # The cost of ignoring them is that nothing here will announce an EOL runtime,
+  # so that part is a calendar job, not an automated one:
+  #   - python 3.12 — security fixes until 2028-10-31
+  #   - node 24     — Active LTS, EOL 2028-04-30 (pinned in frontend/Dockerfile
+  #                   AND in the node-version inputs of ci.yml / e2e.yml, which
+  #                   Dependabot never touches — move all three together)
+  # Patch and minor bumps still flow, which is what picks up base-image CVEs.
   - package-ecosystem: docker
     directory: /backend
     schedule:
       interval: monthly
     labels: [dependencies, docker]
+    ignore:
+      - dependency-name: "*"
+        update-types: [version-update:semver-major]
   - package-ecosystem: docker
     directory: /frontend
     schedule:
       interval: monthly
     labels: [dependencies, docker]
+    ignore:
+      - dependency-name: "*"
+        update-types: [version-update:semver-major]
