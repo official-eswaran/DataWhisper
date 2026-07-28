@@ -16,8 +16,8 @@ jobs:
       run:
         working-directory: backend
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip
@@ -43,8 +43,8 @@ jobs:
       run:
         working-directory: frontend
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           # Keep in step with frontend/Dockerfile's build stage. Node 20 went
           # EOL on 2026-04-30; 24 is the Active LTS. Dependabot cannot catch
@@ -98,21 +98,21 @@ jobs:
     name: Images — build & scan
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Build backend image
         run: docker build -t datawhisper-backend:${{ github.sha }} ./backend
       - name: Build frontend image
         run: docker build -t datawhisper-frontend:${{ github.sha }} ./frontend
 
       - name: Scan backend image (Trivy)
-        uses: aquasecurity/trivy-action@0.35.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: datawhisper-backend:${{ github.sha }}
           severity: "HIGH,CRITICAL"
           ignore-unfixed: true
           exit-code: "1"
       - name: Scan frontend image (Trivy)
-        uses: aquasecurity/trivy-action@0.35.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: datawhisper-frontend:${{ github.sha }}
           severity: "HIGH,CRITICAL"
