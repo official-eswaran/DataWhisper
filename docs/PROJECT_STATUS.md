@@ -25,11 +25,12 @@ finished.
 
 | Area | State |
 |------|-------|
-| Backend tests | **334 passing**, `ruff` clean, **90%** coverage (gate: 70%) |
-| Frontend | Vite build OK, **15 Vitest tests** passing, dependency audit clean |
-| E2E | Playwright full-flow smoke (**verified locally**, not yet run in CI) — `frontend/e2e/` |
+| Backend tests | **338 passing**, `ruff` clean, **90.4%** coverage (gate is still 70 — #28) |
+| Frontend tests | **78 passing**, 4 of 12 components covered (#27) |
+| Build/runtime | Vite build OK, Node 24 (LTS), dependency audit clean |
+| E2E | Runs in GitHub Actions ✅ — but **passes only on retry**, see #45 |
 | Migrations | Head is `a81e5f30c6d2` (signed audit checkpoints) |
-| Open issues | **#5** (go-live checklist — non-code) |
+| Dependencies | Dependabot active; majors gated for pip/npm/docker |
 
 > **Dependency advisories expire on their own.** Two CI gates have already gone
 > red with no code change involved — sentry-sdk (PYSEC-2026-1917) and
@@ -37,7 +38,7 @@ finished.
 > watches, but treat any "clean" claim above as a snapshot: run the verification
 > block below rather than believing it.
 
-### What shipped (all merged to `master`)
+### What shipped
 
 | PR | Issue | What |
 |----|-------|------|
@@ -49,6 +50,17 @@ finished.
 | #14 | #7, #8 | Frontend CRA→Vite, code-splitting, a11y, admin console + onboarding UI |
 | — | #5 (part) | Stripe billing: hosted Checkout + Portal + webhooks ([BILLING.md](BILLING.md)) |
 
+### Shipped 2026-07-28 (audit session)
+
+| PR | What |
+|----|------|
+| #32 | **Security:** 422 responses echoed the submitted password back in the body — register *and* login |
+| #33 | Chart heuristics never matched snake_case columns; signup password rule; `REPLACE()` rejected as DDL; `query.py` 40% → 100%; Dependabot |
+| #42 | Node 20 was **past EOL** — moved to 24 (LTS) in the Dockerfile *and* both workflows; docker majors gated |
+| #43 | `ResultView` (28 tests) + `Signup` (12 tests) |
+| #44 | `ChatWindow` (23 tests) — the SSE state machine |
+| #36–#41 | Dependabot queue triaged: DuckDB 1.1→1.5.5, pandas, Pydantic, numpy 2, OTel, react, recharts, actions |
+
 ---
 
 ## Verify everything still works
@@ -56,14 +68,14 @@ finished.
 ```bash
 # Backend (from backend/)
 export SECRET_KEY=$(python3 -c 'import secrets;print(secrets.token_hex(32))') DEBUG=true
-python3 -m pytest                       # expect 334 passed
+python3 -m pytest                       # expect 338 passed
 python3 -m ruff check app tests         # expect clean
 python3 -m pip_audit -r requirements.txt --strict   # --strict is what CI runs
 
 # Frontend (from frontend/)
 npm ci
 npm run build                           # outputs to build/
-npm test                                # expect 15 passed
+npm test                                # expect 78 passed
 npm audit --omit=dev                    # see the allowlist note in ci.yml
 ```
 
@@ -205,24 +217,37 @@ None are blocking, but they're the honest loose ends:
 - **The billing UI has never seen a real Stripe redirect.** `BillingCard` is
   unit-tested with the API mocked, but no browser has actually made the round
   trip to Stripe and back.
-- **The E2E has never run in GitHub Actions.** It passes locally against real
-  Ollama, but the CI workflow (`e2e.yml`) is unverified on a hosted runner —
-  the Ollama install/model-pull is the likely rough edge on first run.
+- **The E2E runs in GitHub Actions now, but passes only on retry (issue #45).**
+  It has executed on a hosted runner (2026-07-28) and nightly since 2026-07-25.
+  The catch: on the manual run, attempt 1 blew the 120s `expect` timeout on cold
+  CPU inference and the retry passed in 3.1s off a warm LLM cache. So `retries:
+  1` is doing real work and the suite effectively certifies the *warm* path —
+  it cannot currently detect a cold-path regression. Don't just raise the
+  timeout; that hides the symptom without answering whether cold inference is
+  supposed to take that long, which is the same question as #25.
 - **Open signup has a rate limit + kill switch, but no verification (issue
   #21).** Registration is now capped at `RATE_LIMIT_REGISTER` (5/hour/IP) and
   can be closed entirely with `SIGNUPS_OPEN=false`. The complete fix — email
   verification or captcha before an org gets free quota — still needs email/
   captcha infra that isn't here.
-- **The frontend has tests for 1 of its 12 components.** The 15 Vitest tests
-  cover `BillingCard` and `App` (the router shell, not one of the 12).
-  `ChatWindow`, `ResultView`, `FileUpload`, `Login`, `Signup`, `AdminConsole`,
-  `AuditLogs`, `AccountSettings`, `Dashboard`, `Sidebar` and `ErrorBoundary`
-  have none — including `ChatWindow` and `ResultView`, which are the product.
-  `Signup` is the place to start: its error handling was recently changed and
-  nothing pins it.
-- **PDF export truncates every field at 60 characters** (`export.py:_safe`),
-  including the SQL, so session reports cut mid-statement and are not much use
-  as a compliance artifact.
+- **The frontend covers 4 of its 12 components, and CI has no coverage gate
+  (issue #27).** `ResultView`, `ChatWindow`, `Signup` and `BillingCard` are
+  tested (78 tests); `FileUpload`, `Login`, `AdminConsole`, `AuditLogs`,
+  `AccountSettings`, `Dashboard`, `Sidebar` and `ErrorBoundary` are not.
+  `FileUpload` is next in value. Unlike the backend, `npm test` runs with no
+  threshold at all, so coverage can regress silently.
+- **The backend coverage gate is 70% while actual coverage is 90.4% (issue
+  #28).** Twenty points of real coverage are unprotected — a regression could
+  delete a third of the suite and CI would stay green. Raising it to ~85 is a
+  one-line change; 85 rather than 90 because `core/billing.py` sits at 82%.
+- **PDF export truncates every field at 60 characters (issue #46)**
+  (`export.py:_safe`), including the SQL, so session reports cut mid-statement
+  and are not much use as the compliance artifact they exist to be.
+- **Nothing watches for EOL runtimes (issue #47).** Dependabot ignores docker
+  majors by design, and it structurally cannot see the `node-version` inputs in
+  `ci.yml` / `e2e.yml`. Node 20 sat three months past EOL before anyone noticed.
+  Dates to watch are recorded in `.github/dependabot.yml`: python 3.12 →
+  2028-10-31, node 24 → 2028-04-30.
 - **The `rows_processed` ceilings are still guesses, but no longer unmeasured.**
   10M/month on free and 50M on pro were picked without usage data. The platform
   now measures bytes-per-row from every upload of ≥1,000 rows and
@@ -236,9 +261,50 @@ None are blocking, but they're the honest loose ends:
 
 ## If you pick this up next
 
-1. Read [GO_LIVE_CHECKLIST.md](GO_LIVE_CHECKLIST.md) — that's the only open work (#5).
-2. The highest-value *technical* next step is running k6 against a real
-   staging stack and recording the capacity baseline, because every latency
-   SLO and alert threshold currently depends on a guess.
-3. If you're adding a new feature, mirror the existing pattern: code + tests,
-   `ruff` clean, one focused PR against `master`, and update this file.
+**First, don't trust this file.** Run `git fetch --prune`, then the six
+verification commands above. Dependency advisories accrue while nothing is being
+committed, and this file is a snapshot.
+
+### Priority order
+
+The honest ranking, which is *not* the same as "what is easiest":
+
+**P0 — decides whether a bad day is survivable.** None of these are code.
+
+1. **Restore drill from a real backup** (#5, #18). `scripts/restore.sh` and
+   `DISASTER_RECOVERY.md` exist and have never been executed. The RPO ≤ 15 min /
+   RTO ≤ 1 h targets are assertions, not measurements. An untested backup is not
+   a backup — this is the single highest-risk open item in the project.
+2. **k6 against real staging** (#25). Every latency SLO, alert threshold and the
+   E2E's 120s timeout currently descends from one laptop run. Set
+   `LLM_CACHE_ENABLED=false` and raise the target's rate limits first, or you
+   measure the cache and the limiter instead of the app.
+3. **Stripe test-mode round trip** (#19). The money path is fully unit-tested
+   with stubs and has never touched a real account.
+4. **NL2SQL accuracy eval** (#16). Nothing measures whether generated SQL is
+   *correct* — only that it runs.
+
+**P1 — real bugs and abuse vectors.**
+
+5. **E2E cold-path flakiness** (#45). Currently green for the wrong reason.
+6. **Email verification / captcha on signup** (#21). Open signup hands every new
+   org free LLM quota; the rate limit and kill switch only slow single-IP abuse.
+
+**P2 — quality, cheap.** Each is roughly an hour.
+
+7. Raise the backend coverage gate 70 → 85 (#28) — one line.
+8. Frontend coverage gate + the remaining 8 components (#27); `FileUpload` first.
+9. PDF export truncation (#46).
+10. EOL-runtime watch (#47).
+11. Billing feature gaps — proration, dunning, invoices (#31).
+
+### Conventions worth keeping
+
+- **Mutation-test new tests.** Break the thing on purpose and confirm the test
+  fails. Two tests written on 2026-07-28 passed vacuously and were only caught
+  this way: one asserted a button was disabled when it would have been disabled
+  regardless, another compared a global thread count that other tests inflated.
+  Green is not evidence on its own.
+- **Tests must not reach a live Ollama.** See the architecture note above.
+- One focused PR per concern, against **`main`**, `ruff` clean, and update this
+  file in the same PR.
