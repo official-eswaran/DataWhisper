@@ -1,8 +1,8 @@
 -r requirements.txt
-pytest==8.3.3
+pytest==8.4.2
 pytest-cov==5.0.0
 httpx==0.28.1
-ruff==0.6.9
-fakeredis==2.25.1
+ruff==0.16.0
+fakeredis==2.37.0
 moto[s3]==5.2.2
-pip-audit==2.7.3
+pip-audit==2.10.1
