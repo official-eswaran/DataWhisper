@@ -1,5 +1,9 @@
 # ── DataWhisper frontend (build → static nginx) ───────────────────────────────
-FROM node:20-alpine AS build
+# Node 20 reached end of life on 2026-04-30 and no longer receives security
+# fixes. 24 is the Active LTS (maintenance from 2026-10-20, EOL 2028-04-30) —
+# not 26, which is still Current and does not become LTS until 2026-10-28.
+# Only the build stage runs Node; the shipped image is the nginx stage below.
+FROM node:24-alpine AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
