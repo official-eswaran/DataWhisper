@@ -48,8 +48,14 @@ Edit `deploy/k8s/config.yaml` before applying:
       image tags in `deploy/k8s/*.yaml`
 - [ ] Run the migration Job **before** serving traffic:
       `kubectl apply -f deploy/k8s/migration-job.yaml`
-- [ ] **Verify:** `kubectl logs job/datawhisper-migrate` ends at revision
-      `c7e1a2f4b9d0` (org plan + usage_counters) with no errors
+- [ ] **Verify:** `kubectl logs job/datawhisper-migrate` ends with no errors at
+      the revision `cd backend && alembic heads` reports for the tag you
+      deployed — check the two against each other rather than against a number
+      written here. This line used to name `c7e1a2f4b9d0`, which went stale four
+      migrations ago, and a checklist that certifies the wrong head is worse than
+      one that certifies nothing: it signs off a database missing the Stripe
+      billing, upload-calibration and audit-checkpoint tables. (As of 2026-07-28
+      the head is `a81e5f30c6d2` — confirm, don't trust this line.)
 
 ## 5. Deploy
 

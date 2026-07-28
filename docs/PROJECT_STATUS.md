@@ -1,7 +1,14 @@
 # Project status & how to resume
 
-**Last updated:** 2026-07-21
-**Branch of record:** `master` — everything below is merged and pushed.
+**Last updated:** 2026-07-28
+**Branch of record:** `main`.
+
+> ⚠️ **`master` is not the branch of record and does not exist on the remote.**
+> This file said `master` for months while GitHub's default branch was `main`,
+> and a stale local `origin/master` ref kept resolving, so a whole audit was
+> once carried out against a tree five commits behind — concluding CI was red
+> when it had already been fixed. Run `git fetch --prune` and check
+> `gh repo view --json defaultBranchRef` before trusting any local ref.
 
 Read this first in a fresh session. It replaces the need to re-read the old
 issue threads.
@@ -10,16 +17,25 @@ issue threads.
 
 ## Where things stand
 
-**All engineering work is done and merged into `master`.** The only remaining
-work is operational/business — see [GO_LIVE_CHECKLIST.md](GO_LIVE_CHECKLIST.md).
+**Every planned feature is built, tested and merged.** The bulk of what remains
+is operational — see [GO_LIVE_CHECKLIST.md](GO_LIVE_CHECKLIST.md) — but "done"
+overstates it: there is real engineering work left in the "Known gaps" section
+below. None of it blocks a deploy; all of it is worth doing before calling this
+finished.
 
 | Area | State |
 |------|-------|
-| Backend tests | **164 passing**, `ruff` clean |
-| Frontend | Vite build OK, **15 Vitest tests** passing, runtime `npm audit` clean |
+| Backend tests | **334 passing**, `ruff` clean, **90%** coverage (gate: 70%) |
+| Frontend | Vite build OK, **15 Vitest tests** passing, dependency audit clean |
 | E2E | Playwright full-flow smoke (**verified locally**, not yet run in CI) — `frontend/e2e/` |
 | Migrations | Head is `a81e5f30c6d2` (signed audit checkpoints) |
-| Open issues | **#5 only** (go-live checklist — non-code) |
+| Open issues | **#5** (go-live checklist — non-code) |
+
+> **Dependency advisories expire on their own.** Two CI gates have already gone
+> red with no code change involved — sentry-sdk (PYSEC-2026-1917) and
+> react-router (GHSA-qwww-vcr4-c8h2). Both are handled, and Dependabot now
+> watches, but treat any "clean" claim above as a snapshot: run the verification
+> block below rather than believing it.
 
 ### What shipped (all merged to `master`)
 
@@ -40,16 +56,28 @@ work is operational/business — see [GO_LIVE_CHECKLIST.md](GO_LIVE_CHECKLIST.md
 ```bash
 # Backend (from backend/)
 export SECRET_KEY=$(python3 -c 'import secrets;print(secrets.token_hex(32))') DEBUG=true
-python3 -m pytest                       # expect 164 passed
+python3 -m pytest                       # expect 334 passed
 python3 -m ruff check app tests         # expect clean
-python3 -m pip_audit -r requirements.txt
+python3 -m pip_audit -r requirements.txt --strict   # --strict is what CI runs
 
 # Frontend (from frontend/)
 npm ci
 npm run build                           # outputs to build/
 npm test                                # expect 15 passed
-npm audit --omit=dev --audit-level=high # runtime deps must be clean
+npm audit --omit=dev                    # see the allowlist note in ci.yml
 ```
+
+The backend commands are what `.github/workflows/ci.yml` runs. The frontend
+audit is **not** a bare `npm audit` in CI: the job allowlists
+`GHSA-qwww-vcr4-c8h2` by id (react-router has no clean 7.x — below 7.12 carries
+14 advisories including an unauthenticated RCE, above it carries this one, which
+is RSC-only and unreachable from a Vite SPA) and fails on everything else. Read
+the comment in `ci.yml` before reacting to what a bare `npm audit` prints.
+
+There is a third CI job these commands don't cover — `images`, which builds both
+Dockerfiles and scans them with Trivy. It has caught a stale action pin and base
+image CVEs that no source change would surface, so don't assume green locally
+means green in CI.
 
 Note: `boto3`, `moto`, `sentry-sdk`, and the OpenTelemetry packages are in
 `requirements.txt` / `requirements-dev.txt`. If tests fail on import, run
@@ -127,6 +155,23 @@ Things that are easy to miss when reading the code cold:
 - **Frontend JSX files use the `.jsx` extension** (required post-Vite).
   `ResultView` is lazy-loaded so Recharts stays out of the initial bundle —
   keep it that way.
+- **Column-name heuristics must match against `_name_words()`, not the raw
+  column.** `_` is a word character, so `\b(date)\b` cannot match `order_date`
+  and `\b(name)\b` cannot match `customer_name` — and SQL columns are
+  overwhelmingly snake_case. Every date-detection and named-entity rule in
+  `chart_advisor.py` was silently dead until this was fixed, so time series
+  rendered as bar charts. If you add a column-name pattern, match it against the
+  split form or it will never fire. Keep the patterns to words that identify an
+  entity on their own: bare stems like `first`/`last` add nothing once the split
+  is in place (the `name` alternative already reaches `first_name`) but do
+  capture `first_seen` and `last_login`. `test_chart_advisor.py` pins both
+  directions.
+- **Tests must not reach a live Ollama.** `classify_intent` falls back to the
+  LLM for questions its keyword lists don't recognise, so on a machine with
+  Ollama running, any test asking an unrecognised question silently becomes a
+  network test — slow, non-deterministic, and green for the wrong reason.
+  `test_query_stream.py` has an autouse fixture that makes the fallback raise;
+  do the same in any new test that submits free-form questions.
 - **The E2E lives in `frontend/e2e/` and drives the real stack.** `npm run
   test:e2e` starts the backend + a dedicated-port frontend and runs one browser
   smoke through register → upload → real Ollama query → rendered result. It
@@ -168,6 +213,16 @@ None are blocking, but they're the honest loose ends:
   can be closed entirely with `SIGNUPS_OPEN=false`. The complete fix — email
   verification or captcha before an org gets free quota — still needs email/
   captcha infra that isn't here.
+- **The frontend has tests for 1 of its 12 components.** The 15 Vitest tests
+  cover `BillingCard` and `App` (the router shell, not one of the 12).
+  `ChatWindow`, `ResultView`, `FileUpload`, `Login`, `Signup`, `AdminConsole`,
+  `AuditLogs`, `AccountSettings`, `Dashboard`, `Sidebar` and `ErrorBoundary`
+  have none — including `ChatWindow` and `ResultView`, which are the product.
+  `Signup` is the place to start: its error handling was recently changed and
+  nothing pins it.
+- **PDF export truncates every field at 60 characters** (`export.py:_safe`),
+  including the SQL, so session reports cut mid-statement and are not much use
+  as a compliance artifact.
 - **The `rows_processed` ceilings are still guesses, but no longer unmeasured.**
   10M/month on free and 50M on pro were picked without usage data. The platform
   now measures bytes-per-row from every upload of ≥1,000 rows and
