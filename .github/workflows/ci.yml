@@ -31,7 +31,10 @@ jobs:
         env:
           DEBUG: "true"
           SECRET_KEY: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-        run: pytest --cov=app --cov-report=term-missing --cov-fail-under=70
+        # 85, not 90: actual coverage is ~90% but core/billing.py sits at 82%,
+        # so a 90 gate would fail on any change that touches billing without
+        # adding tests. Raise this again once billing catches up (#28).
+        run: pytest --cov=app --cov-report=term-missing --cov-fail-under=85
 
       - name: Dependency vulnerability audit (pip-audit)
         run: pip-audit -r requirements.txt --strict --progress-spinner off
