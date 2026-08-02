@@ -29,28 +29,46 @@ hour each.
 
 ### 1. `#16` — NL2SQL accuracy eval (P0)
 
+- [x] **Merged** — 2026-08-02
+
+Delivered `backend/evals/`: 57 cases over both sample datasets, scored by
+execution accuracy (run the model's SQL, run a reference query, compare results)
+so that phrasing differences don't count as errors. `python -m evals` from
+`backend/`. Ollama-dependent, so it runs in its own weekly `eval.yml`, never in
+the per-PR job — the "tests must not reach Ollama" rule holds.
+
+**First measured baseline: 78.4%** (`evals/baseline.json`, 3 repeats, cache off,
+laptop CPU). CI floor set to 70, roughly 7 points below the lowest observed
+round, so it catches a category-sized regression without firing on the model's
+run-to-run noise.
+
+The eval's own logic is unit-tested without Ollama in
+`tests/test_nl2sql_eval.py` (31 tests, all mutation-tested), including tests
+that the case-set checker actually rejects bad cases — a validator that cannot
+fail would make "the case set is valid" meaningless.
+
+**It immediately paid for itself** → see item 2a below.
+
+### 2a. Model drops the GROUP BY key from SELECT (new, from #16)
+
 - [ ] **Merged**
 
-The product's core promise is "ask in English, get correct answers" and nothing
-measures whether the generated SQL is *correct* — only that it runs and is safe.
-The only P0 that isn't blocked on external infrastructure.
+Not an issue when this checklist was written; the eval found it. Nine of the ten
+consistently-failing cases are this single bug, and `group_by` scores **30%**.
 
-**Scope**
-- ~50 question → expected-result pairs against `sample_data/`
-  (`sales_data.csv`, `employees.csv`).
-- A harness that runs the real pipeline and compares *results*, not SQL strings —
-  many correct queries produce the same answer. Comparison needs to tolerate
-  column order, row order and float precision.
-- A committed baseline accuracy number, and a floor wired into CI.
+Asked "revenue by region", the model generates
+`SELECT SUM(total_amount) FROM sales_data GROUP BY region` — unlabelled numbers
+with no way to tell which region is which. `prompt_builder.py` rule 8 already
+forbids precisely this and shows the correct form; the model ignores it. The
+grouped questions that *do* pass are the ones with a matching few-shot example
+lower in the prompt, which points at adding examples rather than sharpening the
+rule.
 
-**Files** — new `backend/evals/` (nothing exists yet), `sample_data/`, `ci.yml`
+**Files** — `backend/app/nl2sql/prompt_builder.py`
 
-**Done when** the harness runs from one command, prints an accuracy %, and CI
-fails if accuracy drops below the committed floor.
-
-**Watch out** — this one *does* need a live Ollama by design, so it cannot run in
-the normal `pytest` job. It needs its own workflow or an explicit opt-in marker,
-or it will break the "tests must not reach Ollama" rule for everyone else.
+**Done when** `python -m evals --category group_by` improves and the overall
+baseline is re-recorded. Expect roughly +15 points overall — this is the
+cheapest large accuracy win available, and it is now measurable.
 
 ### 2. `#45` — E2E passes only on retry (P1)
 

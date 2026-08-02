@@ -1,0 +1,71 @@
+# NL2SQL accuracy eval (issue #16). Measures whether generated SQL produces the
+# *correct answer*, which no other job checks — ci.yml proves SQL is safe and
+# runnable, not right.
+#
+# Not part of per-PR ci.yml, for the same reason as e2e.yml: it pulls a multi-GB
+# model and does CPU inference. Manual dispatch plus a weekly schedule.
+#
+# The floor comes from evals/baseline.json and is deliberately set below the
+# recorded accuracy — this job exists to catch a regression (a prompt edit, a
+# model bump, a schema change), not to assert a target. See backend/evals/README.md.
+name: eval
+
+on:
+  workflow_dispatch:
+    inputs:
+      repeat:
+        description: "Runs per case (higher surfaces non-determinism)"
+        required: false
+        default: "1"
+  schedule:
+    - cron: "0 5 * * 1" # Mondays, 05:00 UTC
+
+jobs:
+  accuracy:
+    name: NL2SQL accuracy
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements-dev.txt
+      - name: Install backend deps
+        working-directory: backend
+        run: pip install -r requirements-dev.txt
+
+      - name: Install Ollama and pull the model
+        run: |
+          # The install script starts the daemon itself — do not also run
+          # `ollama serve &`, which races it and logs a spurious "address
+          # already in use" that masks a genuine bind failure (issue #45).
+          curl -fsSL https://ollama.com/install.sh | sh
+          for i in $(seq 1 60); do
+            curl -sf http://localhost:11434/api/tags >/dev/null && break
+            sleep 2
+          done
+          curl -sf http://localhost:11434/api/tags >/dev/null || {
+            echo "Ollama did not become reachable"; exit 1;
+          }
+          ollama pull llama3.2:3b
+
+      - name: Run the eval
+        working-directory: backend
+        env:
+          DEBUG: "true"
+        run: |
+          python -m evals \
+            --repeat "${{ inputs.repeat || 1 }}" \
+            --check-baseline \
+            --json eval-report.json
+
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: eval-report
+          path: backend/eval-report.json
+          retention-days: 30
