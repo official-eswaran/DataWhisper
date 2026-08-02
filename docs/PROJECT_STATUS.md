@@ -25,7 +25,7 @@ finished.
 
 | Area | State |
 |------|-------|
-| Backend tests | **338 passing**, `ruff` clean, **90.4%** coverage (gate is still 70 — #28) |
+| Backend tests | **338 passing**, `ruff` clean, **90.4%** coverage, gate raised to **85** (#28) |
 | Frontend tests | **78 passing**, 4 of 12 components covered (#27) |
 | Build/runtime | Vite build OK, Node 24 (LTS), dependency audit clean |
 | E2E | Runs in GitHub Actions ✅ — but **passes only on retry**, see #45 |
@@ -236,10 +236,11 @@ None are blocking, but they're the honest loose ends:
   `AccountSettings`, `Dashboard`, `Sidebar` and `ErrorBoundary` are not.
   `FileUpload` is next in value. Unlike the backend, `npm test` runs with no
   threshold at all, so coverage can regress silently.
-- **The backend coverage gate is 70% while actual coverage is 90.4% (issue
-  #28).** Twenty points of real coverage are unprotected — a regression could
-  delete a third of the suite and CI would stay green. Raising it to ~85 is a
-  one-line change; 85 rather than 90 because `core/billing.py` sits at 82%.
+- ~~**The backend coverage gate is 70% while actual coverage is 90.4%**~~ —
+  **fixed:** the gate is now 85 (#28). 85 rather than 90 because
+  `core/billing.py` sits at 82%, so a 90 gate would fail on any billing change
+  that didn't also add tests. The remaining ~5 points are still unprotected;
+  raise the gate again when billing coverage catches up.
 - **PDF export truncates every field at 60 characters (issue #46)**
   (`export.py:_safe`), including the SQL, so session reports cut mid-statement
   and are not much use as the compliance artifact they exist to be.
@@ -267,7 +268,9 @@ committed, and this file is a snapshot.
 
 ### Priority order
 
-The honest ranking, which is *not* the same as "what is easiest":
+The honest ranking, which is *not* the same as "what is easiest".
+[ISSUE_CHECKLIST.md](ISSUE_CHECKLIST.md) turns this into the running work queue —
+one item, one PR, merged before the next starts.
 
 **P0 — decides whether a bad day is survivable.** None of these are code.
 
@@ -292,7 +295,7 @@ The honest ranking, which is *not* the same as "what is easiest":
 
 **P2 — quality, cheap.** Each is roughly an hour.
 
-7. Raise the backend coverage gate 70 → 85 (#28) — one line.
+7. ~~Raise the backend coverage gate 70 → 85 (#28)~~ — done 2026-08-02.
 8. Frontend coverage gate + the remaining 8 components (#27); `FileUpload` first.
 9. PDF export truncation (#46).
 10. EOL-runtime watch (#47).
