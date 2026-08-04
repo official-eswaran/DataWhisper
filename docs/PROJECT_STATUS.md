@@ -28,7 +28,7 @@ finished.
 | Backend tests | **396 passing**, `ruff` clean, **90.4%** coverage, gate raised to **85** (#28) |
 | Frontend tests | **78 passing**, 4 of 12 components covered (#27) |
 | Build/runtime | Vite build OK, Node 24 (LTS), dependency audit clean |
-| E2E | Runs in GitHub Actions ✅ — but **passes only on retry**, see #45 |
+| E2E | Runs in GitHub Actions ✅; cold-path fix in review (model warm-up + `retries: 0`), see #45 |
 | Migrations | Head is `a81e5f30c6d2` (signed audit checkpoints) |
 | Dependencies | Dependabot active; majors gated for pip/npm/docker |
 
@@ -234,14 +234,16 @@ None are blocking, but they're the honest loose ends:
 - **The billing UI has never seen a real Stripe redirect.** `BillingCard` is
   unit-tested with the API mocked, but no browser has actually made the round
   trip to Stripe and back.
-- **The E2E runs in GitHub Actions now, but passes only on retry (issue #45).**
-  It has executed on a hosted runner (2026-07-28) and nightly since 2026-07-25.
-  The catch: on the manual run, attempt 1 blew the 120s `expect` timeout on cold
-  CPU inference and the retry passed in 3.1s off a warm LLM cache. So `retries:
-  1` is doing real work and the suite effectively certifies the *warm* path —
-  it cannot currently detect a cold-path regression. Don't just raise the
-  timeout; that hides the symptom without answering whether cold inference is
-  supposed to take that long, which is the same question as #25.
+- **The E2E cold-path masking is being fixed (issue #45, PR in review).**
+  Background: it has executed on a hosted runner (2026-07-28) and nightly since
+  2026-07-25, but on the manual run attempt 1 blew the 120s `expect` timeout on
+  cold CPU inference and the retry passed in 3.1s off a warm LLM cache — so
+  `retries: 1` was doing real work and the suite certified the *warm* path,
+  unable to detect a cold-path regression. The fix does not raise the timeout:
+  `run.sh` warms the model into RAM before Playwright starts, so the timed query
+  no longer pays model load, and `retries` is now `0` so attempt 1 must pass on
+  its own. Whether cold inference is *supposed* to be this slow is still #25's
+  question, answered against real staging, not a shared runner.
 - **Open signup has a rate limit + kill switch, but no verification (issue
   #21).** Registration is now capped at `RATE_LIMIT_REGISTER` (5/hour/IP) and
   can be closed entirely with `SIGNUPS_OPEN=false`. The complete fix — email

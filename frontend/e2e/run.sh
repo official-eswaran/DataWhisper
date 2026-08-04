@@ -24,10 +24,28 @@ cleanup() {
 }
 trap cleanup EXIT
 
+OLLAMA_BASE_URL="${OLLAMA_BASE_URL:-http://localhost:11434}"
+MODEL="${LLM_MODEL:-llama3.2:3b}"
+
 echo "e2e: checking Ollama…"
-if ! curl -sf -m 3 "${OLLAMA_BASE_URL:-http://localhost:11434}/api/tags" >/dev/null; then
+if ! curl -sf -m 3 "$OLLAMA_BASE_URL/api/tags" >/dev/null; then
   echo "e2e: Ollama is not reachable — start it and pull the model first." >&2
   exit 1
+fi
+
+# Warm the model: force its weights into RAM now, before Playwright starts, so
+# the in-test query is not the one paying for the cold model load. Without this,
+# the first (cold) inference on a CPU runner blows the test's expect timeout, the
+# response lands after the assertion gave up, and only the cache-warmed retry
+# passes — the suite then certifies the warm path while a cold-path regression
+# goes undetected (issue #45). Ollama keeps the model resident for ~5 min, well
+# past frontend startup + register + upload, so it is still loaded at query time.
+echo "e2e: warming '$MODEL' (loads weights into RAM)…"
+if curl -sf -m 180 "$OLLAMA_BASE_URL/api/generate" \
+     -d "{\"model\":\"$MODEL\",\"prompt\":\"ready?\",\"stream\":false}" >/dev/null; then
+  echo "e2e: model warm."
+else
+  echo "e2e: warm-up call failed — the first in-test query will pay model load." >&2
 fi
 
 echo "e2e: starting backend on :8000…"

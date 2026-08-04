@@ -46,9 +46,14 @@ jobs:
 
       - name: Start Ollama and pull the model
         run: |
+          # The install script starts the daemon as a service; a second
+          # `ollama serve &` only ever raced it and logged "address already in
+          # use", which masked genuine bind failures (issue #45). Rely on the
+          # wait-loop below — if the daemon is genuinely down, the pull fails
+          # loudly instead of being hidden behind that noise.
           curl -fsSL https://ollama.com/install.sh | sh
-          ollama serve &
           # Wait for the daemon, then pull the model the app defaults to.
+          # run.sh warms it into RAM before the timed query.
           for i in $(seq 1 30); do
             curl -sf http://localhost:11434/api/tags >/dev/null && break
             sleep 1
