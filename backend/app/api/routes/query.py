@@ -37,7 +37,7 @@ from app.nl2sql.pipeline import NL2SQLPipeline, execute_with_healing, get_schema
 from app.nl2sql.prompt_builder import build_nl2sql_prompt
 from app.nl2sql.result_formatter import build_result, chat_result
 from app.nl2sql.sql_repair import add_missing_group_keys
-from app.nl2sql.sql_validator import validate_and_fix_sql
+from app.nl2sql.sql_validator import validate_sql
 
 logger = logging.getLogger("datawhisper.query")
 router = APIRouter()
@@ -230,7 +230,7 @@ async def ask_question_stream(
                     return
                 llm_cache_store(prompt, llm_response)
 
-            generated_sql = validate_and_fix_sql(llm_response, conn)
+            generated_sql, bind_error = validate_sql(llm_response, conn)
             if not generated_sql:
                 yield _sse({"stage": "done", "result": {
                     "type": "error",
@@ -242,10 +242,14 @@ async def ask_question_stream(
             # audited and shown to the user must be the SQL that actually ran.
             generated_sql = add_missing_group_keys(generated_sql, conn)
 
-            # Stage 4 — execute (with one self-healing retry)
+            # Stage 4 — execute (with one self-healing retry). A safe query that
+            # failed to bind carries bind_error, routing it into the heal path
+            # rather than dead-ending above.
             yield _sse({"stage": "executing", "message": "Running the query on your data..."})
             try:
-                result_df = await asyncio.to_thread(execute_with_healing, conn, generated_sql, schema_info)
+                result_df = await asyncio.to_thread(
+                    execute_with_healing, conn, generated_sql, schema_info, bind_error
+                )
             except RuntimeError as exc:
                 yield _sse({"stage": "done", "result": {"type": "error", "message": str(exc), "sql": generated_sql}})
                 return

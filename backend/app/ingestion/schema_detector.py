@@ -43,12 +43,24 @@ def detect_and_clean_schema(df: pd.DataFrame) -> pd.DataFrame:
     # Clean column names
     df.columns = [expand_abbreviation(clean_column_name(c)) for c in df.columns]
 
-    # Try to convert object columns to datetime
+    # Try to convert object columns to datetime.
+    #
+    # A plain `2021-03-15` column parses to datetime64[ns], which DuckDB stores
+    # as TIMESTAMP_NS — an unusual type name the model rarely sees, nudging it
+    # toward wrong turns like `join_date LIKE '2021%'` (a bind error). When a
+    # column carries no time-of-day component we present it as DATE instead: a
+    # familiar type the date-function reference (YEAR(), date_trunc, …) expects.
+    # Columns that do carry real times stay as timestamps.
     for col in df.select_dtypes(include=["object"]).columns:
         try:
-            df[col] = pd.to_datetime(df[col], format="mixed", dayfirst=False)
+            parsed = pd.to_datetime(df[col], format="mixed", dayfirst=False)
         except (ValueError, TypeError):
-            pass
+            continue
+        non_null = parsed.dropna()
+        if not non_null.empty and (non_null.dt.normalize() == non_null).all():
+            df[col] = parsed.dt.date  # date-only → DuckDB DATE
+        else:
+            df[col] = parsed
 
     # Try to convert object columns to numeric
     for col in df.select_dtypes(include=["object"]).columns:
