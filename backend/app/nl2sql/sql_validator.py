@@ -85,13 +85,38 @@ def is_safe_sql(sql: str) -> bool:
     return True
 
 
-def validate_and_fix_sql(llm_response: str, conn) -> str | None:
-    """Extract, validate, and syntax-check. Returns safe SQL or None."""
+def validate_sql(llm_response: str, conn) -> tuple[str | None, str | None]:
+    """Extract, safety-check, and bind-check an LLM SQL response.
+
+    Returns ``(sql, bind_error)``:
+
+    * ``(None, None)``  — unsafe or unparseable. Unrecoverable; do not heal.
+    * ``(sql, None)``   — safe and binds cleanly; ready to execute.
+    * ``(sql, error)``  — safe but ``EXPLAIN`` failed to bind it. The caller
+      should route this to the self-heal path, feeding ``error`` back to the
+      model, rather than dead-ending on "please rephrase". Bind errors are the
+      most common LLM SQL failure and are exactly what the heal prompt fixes.
+
+    The safety gate (``is_safe_sql``) is authoritative: a query that fails it
+    never leaves this function, so nothing downstream can execute unsafe SQL.
+    """
     sql = extract_sql(llm_response)
     if not is_safe_sql(sql):
-        return None
+        return None, None
     try:
         conn.execute(f"EXPLAIN {sql}")
-        return sql
-    except Exception:
-        return None
+    except Exception as exc:
+        return sql, str(exc)
+    return sql, None
+
+
+def validate_and_fix_sql(llm_response: str, conn) -> str | None:
+    """Extract, validate, and syntax-check. Returns safe SQL or None.
+
+    Bind failures return None here — use this where a failure is terminal, such
+    as re-validating an already-healed query (there is no second heal). New call
+    sites that want to route bind errors into the heal path should use
+    ``validate_sql`` instead.
+    """
+    sql, bind_error = validate_sql(llm_response, conn)
+    return sql if bind_error is None else None

@@ -359,7 +359,7 @@ def test_llm_failure_is_reported_without_leaking_internals(
 def test_unusable_generated_sql_asks_the_user_to_rephrase(
     client, admin_token, session_id, stub_llm, monkeypatch
 ):
-    monkeypatch.setattr(f"{QUERY_MODULE}.validate_and_fix_sql", lambda resp, conn: None)
+    monkeypatch.setattr(f"{QUERY_MODULE}.validate_sql", lambda resp, conn: (None, None))
     result = _final(_ask(client, admin_token, session_id))
     assert result["type"] == "error"
     assert "rephrase" in result["message"].lower()
@@ -370,7 +370,7 @@ def test_execution_failure_returns_the_sql_it_tried(
     client, admin_token, session_id, stub_llm, monkeypatch
 ):
     """Returning the attempted SQL is what makes the failure debuggable."""
-    def boom(conn, sql, schema):
+    def boom(conn, sql, schema, initial_error=None):
         raise RuntimeError("The query could not be executed on your data.")
 
     monkeypatch.setattr(f"{QUERY_MODULE}.execute_with_healing", boom)
@@ -398,7 +398,7 @@ def test_a_failed_query_burns_no_quota(
 ):
     """Check-then-consume: the check happens up front, the record only on success."""
     recorded = []
-    monkeypatch.setattr(f"{QUERY_MODULE}.validate_and_fix_sql", lambda resp, conn: None)
+    monkeypatch.setattr(f"{QUERY_MODULE}.validate_sql", lambda resp, conn: (None, None))
     monkeypatch.setattr(
         f"{QUERY_MODULE}.quota_record",
         lambda org_id, metric, amount: recorded.append((metric, amount)),
@@ -418,7 +418,7 @@ def test_results_are_capped_at_max_result_rows(
     monkeypatch.setattr(settings, "MAX_RESULT_ROWS", 2)
     monkeypatch.setattr(
         f"{QUERY_MODULE}.execute_with_healing",
-        lambda conn, sql, schema: pd.DataFrame({"n": list(range(50))}),
+        lambda conn, sql, schema, initial_error=None: pd.DataFrame({"n": list(range(50))}),
     )
     result = _final(_ask(client, admin_token, session_id))
     assert result["row_count"] == 2
@@ -434,7 +434,7 @@ def test_row_count_metered_is_the_capped_count(
     monkeypatch.setattr(settings, "MAX_RESULT_ROWS", 3)
     monkeypatch.setattr(
         f"{QUERY_MODULE}.execute_with_healing",
-        lambda conn, sql, schema: pd.DataFrame({"n": list(range(50))}),
+        lambda conn, sql, schema, initial_error=None: pd.DataFrame({"n": list(range(50))}),
     )
     monkeypatch.setattr(
         f"{QUERY_MODULE}.quota_record",

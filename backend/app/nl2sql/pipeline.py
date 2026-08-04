@@ -20,7 +20,7 @@ from app.nl2sql.llm_client import call_local_llm
 from app.nl2sql.prompt_builder import build_nl2sql_prompt
 from app.nl2sql.result_formatter import build_result, chat_result
 from app.nl2sql.sql_repair import add_missing_group_keys
-from app.nl2sql.sql_validator import validate_and_fix_sql
+from app.nl2sql.sql_validator import validate_and_fix_sql, validate_sql
 
 logger = logging.getLogger("datawhisper.pipeline")
 
@@ -43,28 +43,40 @@ def get_schema_info(conn) -> str:
     return "\n\n".join(parts)
 
 
-def execute_with_healing(conn, sql: str, schema_info: str) -> pd.DataFrame:
+def execute_with_healing(conn, sql: str, schema_info: str, initial_error: str | None = None) -> pd.DataFrame:
     """Run SQL; on failure, ask the LLM to repair it once, then re-run.
+
+    ``initial_error`` lets a caller that already knows the query fails to bind
+    (an ``EXPLAIN`` failure caught upstream by ``validate_sql``) skip straight to
+    the repair step instead of re-triggering the same error. When it is None the
+    query is executed first and only genuine runtime failures reach the heal.
 
     Raises RuntimeError (safe message) if it still cannot execute.
     """
-    try:
-        return conn.execute(sql).fetchdf()
-    except Exception as first_error:
-        logger.info("SQL failed, attempting self-heal: %s", first_error)
-        retry_prompt = (
-            f"The following DuckDB SQL failed:\n{sql}\n\n"
-            f"Error: {first_error}\n\nSchema:\n{schema_info}\n\n"
-            f"Return ONLY the corrected SQL."
-        )
-        repaired = validate_and_fix_sql(call_local_llm(retry_prompt), conn)
-        if not repaired:
-            raise RuntimeError("Could not build a valid query for that question. Please rephrase.")
-        repaired = add_missing_group_keys(repaired, conn)
+    if initial_error is None:
         try:
-            return conn.execute(repaired).fetchdf()
-        except Exception:
-            raise RuntimeError("The query could not be executed on your data. Please rephrase.")
+            return conn.execute(sql).fetchdf()
+        except Exception as first_error:
+            initial_error = str(first_error)
+
+    logger.info("SQL failed, attempting self-heal: %s", initial_error)
+    retry_prompt = (
+        f"The following DuckDB SQL failed:\n{sql}\n\n"
+        f"Error: {initial_error}\n\nSchema:\n{schema_info}\n\n"
+        f"Return ONLY the corrected SQL."
+    )
+    # The healed query goes back through is_safe_sql + EXPLAIN before it can run,
+    # so the safety gate stays authoritative even on the repair path.
+    repaired = validate_and_fix_sql(call_local_llm(retry_prompt), conn)
+    if not repaired:
+        raise RuntimeError("Could not build a valid query for that question. Please rephrase.")
+    # Same deterministic GROUP BY repair the primary path applies (#57), so a
+    # healed grouped query keeps its grouping key too.
+    repaired = add_missing_group_keys(repaired, conn)
+    try:
+        return conn.execute(repaired).fetchdf()
+    except Exception:
+        raise RuntimeError("The query could not be executed on your data. Please rephrase.")
 
 
 class NL2SQLPipeline:
@@ -95,7 +107,7 @@ class NL2SQLPipeline:
         except RuntimeError as exc:
             return {"type": "error", "message": str(exc), "sql": None}
 
-        generated_sql = validate_and_fix_sql(llm_response, self.conn)
+        generated_sql, bind_error = validate_sql(llm_response, self.conn)
         if not generated_sql:
             return {
                 "type": "error",
@@ -106,7 +118,9 @@ class NL2SQLPipeline:
         generated_sql = add_missing_group_keys(generated_sql, self.conn)
 
         try:
-            result_df = execute_with_healing(self.conn, generated_sql, schema_info)
+            # A safe query that failed to bind carries bind_error, which routes it
+            # straight into the self-heal path instead of dead-ending here.
+            result_df = execute_with_healing(self.conn, generated_sql, schema_info, initial_error=bind_error)
         except RuntimeError as exc:
             return {"type": "error", "message": str(exc), "sql": generated_sql}
 
