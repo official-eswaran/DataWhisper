@@ -258,9 +258,18 @@ None are blocking, but they're the honest loose ends:
   `core/billing.py` sits at 82%, so a 90 gate would fail on any billing change
   that didn't also add tests. The remaining ~5 points are still unprotected;
   raise the gate again when billing coverage catches up.
-- **PDF export truncates every field at 60 characters (issue #46)**
-  (`export.py:_safe`), including the SQL, so session reports cut mid-statement
-  and are not much use as the compliance artifact they exist to be.
+- ~~**PDF export truncates every field at 60 characters (#46)**~~ — fixed
+  2026-08-03 (PR #51): cells wrap as ReportLab `Paragraph`s, with a 4000-char
+  runaway guard in place of the 60-char cap.
+- **Four measured accuracy defects remain (#58–#61), from the eval.** After #52
+  the eval still fails five cases every run, and they are four distinct bugs:
+  `DISTINCT` omitted (#58), superlative questions returning the measure instead
+  of the entity (#59), "how many X sold" counting orders instead of summing
+  units (#60), and date columns typed `TIMESTAMP_NS` (#61). **#61 also found
+  that the self-heal in `pipeline.py` is unreachable for bind errors** — the
+  `EXPLAIN` check in `validate_and_fix_sql` rejects them and returns early, so
+  the retry prompt is close to dead code. That half is structural, not
+  accuracy.
 - **Nothing watches for EOL runtimes (issue #47).** Dependabot ignores docker
   majors by design, and it structurally cannot see the `node-version` inputs in
   `ci.yml` / `e2e.yml`. Node 20 sat three months past EOL before anyone noticed.

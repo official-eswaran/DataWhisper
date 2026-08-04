@@ -152,23 +152,9 @@ seven components can be follow-up PRs — split them rather than growing one PR.
 
 ### 6. `#46` — PDF export truncates at 60 chars (P2)
 
-- [ ] **Merged**
-
-`_safe(val, limit=60)` in `export.py:47` is applied uniformly to the question,
-the generated SQL and the result summary. This export is the compliance artifact
-handed to an auditor — truncated SQL cannot serve that purpose, and the `WHERE`
-clause that changes the meaning of the result is exactly what gets cut. The audit
-log already stores the full text; only the PDF discards it.
-
-**Scope** — wrap rather than truncate: ReportLab `Paragraph` cells inside the
-`Table`. Keep a generous cap (a few thousand chars) as a runaway guard. Check
-pagination still behaves once cells can be tall (`repeatRows=1` is already set).
-
-**Files** — `backend/app/api/routes/export.py:47,59`
-
-**Done when** a known long SQL string round-trips into the PDF intact.
-`test_integration.py::test_upload_query_export_flow` asserts only that the bytes
-start with `%PDF` — assert content.
+- [x] **Merged** — 2026-08-03, PR #51 (`kiran` branch, landed outside the
+  session that wrote this checklist). Cells are ReportLab `Paragraph`s that wrap
+  to the column; the 60-char cap became a 4000-char runaway guard.
 
 ### 7. `#47` — EOL runtime watch (P2)
 
@@ -188,6 +174,29 @@ today: python 3.12 → 2028-10-31, node 24 → 2028-04-30)
 
 **Done when** the workflow runs on schedule and has been proven to fire — test it
 against a deliberately stale pin before trusting it.
+
+### 7a. Accuracy defects found by the eval (#58, #59, #60, #61)
+
+- [ ] **Merged**
+
+The five cases still failing every run after #52. Four distinct defects, filed
+individually with the failing SQL and a verification command each:
+
+| issue | defect | severity |
+|---|---|---|
+| #61 | Dates are `TIMESTAMP_NS`, model emits `LIKE '2021%'` — **and the self-heal never runs for bind errors** | P1 |
+| #60 | "How many laptops sold" counts orders (3) instead of summing units (11) | P2 |
+| #59 | "Which product is cheapest" returns the price, not the product | P2 |
+| #58 | "List all the regions" omits `DISTINCT` — 25 rows instead of 4 | P2 |
+
+**#61 is the one to read first.** Half of it is not an accuracy bug at all: the
+self-heal path in `pipeline.py` is unreachable for the failure it was written to
+catch, because `validate_and_fix_sql`'s `EXPLAIN` check rejects bind errors and
+returns early. That is a structural finding, not a prompt tweak.
+
+**Before fixing any of these, read the #52 lesson** in the note above: prompt
+edits regressed unrelated categories, and only a full `--repeat 3` run catches
+that. The floor is 80; the current baseline is 88.9%.
 
 ### 8. `#31` — Billing feature gaps (P2)
 
