@@ -19,6 +19,7 @@ from app.nl2sql.intent_classifier import (
 from app.nl2sql.llm_client import call_local_llm
 from app.nl2sql.prompt_builder import build_nl2sql_prompt
 from app.nl2sql.result_formatter import build_result, chat_result
+from app.nl2sql.sql_repair import add_missing_group_keys
 from app.nl2sql.sql_validator import validate_and_fix_sql
 
 logger = logging.getLogger("datawhisper.pipeline")
@@ -59,6 +60,7 @@ def execute_with_healing(conn, sql: str, schema_info: str) -> pd.DataFrame:
         repaired = validate_and_fix_sql(call_local_llm(retry_prompt), conn)
         if not repaired:
             raise RuntimeError("Could not build a valid query for that question. Please rephrase.")
+        repaired = add_missing_group_keys(repaired, conn)
         try:
             return conn.execute(repaired).fetchdf()
         except Exception:
@@ -100,6 +102,8 @@ class NL2SQLPipeline:
                 "message": "Could not generate a valid SQL query. Please rephrase.",
                 "sql": None,
             }
+        # After validation, before execution: the user is shown the SQL that ran.
+        generated_sql = add_missing_group_keys(generated_sql, self.conn)
 
         try:
             result_df = execute_with_healing(self.conn, generated_sql, schema_info)

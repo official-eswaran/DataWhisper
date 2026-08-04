@@ -83,6 +83,12 @@ record what changed.
 failed others. Those are where a single-run number is least trustworthy, and
 they are why the floor has headroom.
 
+**Always re-run the whole eval after a change, never just the category you were
+aiming at.** The first attempt at #52 added few-shot examples for grouped
+questions; `--category group_by` improved, and the full run showed the change
+had *cost* 5 points overall by breaking two unrelated cases that had been
+passing every time. A category-scoped run would have shipped a regression.
+
 ## Limitations — read before quoting the number
 
 - **Two small datasets** (25 sales rows, 20 employees). Enough to catch wrong
