@@ -71,7 +71,10 @@ existed. For a 3B model, prompt text is a suggestion; a rewrite is a guarantee.
 
 ### 2. `#45` — E2E passes only on retry (P1)
 
-- [ ] **Merged**
+- [ ] **Merged** — PR open on `kiran` (2026-08-04). `run.sh` now warms the model
+  into RAM before Playwright runs, so the timed query no longer pays model load;
+  `retries` dropped to `0` so a cold-path regression goes red instead of being
+  masked; redundant `ollama serve &` removed from `e2e.yml`. Tick when merged.
 
 Attempt 1 blows the 120s `expect` timeout on cold CPU inference, warms the LLM
 cache, and the retry passes in 3.1s. `retries: 1` is what makes it green, so the

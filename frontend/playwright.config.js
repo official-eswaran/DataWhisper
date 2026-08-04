@@ -23,7 +23,11 @@ export default defineConfig({
   expect: { timeout: 120_000 }, // individual waits, incl. the query response
   fullyParallel: false,
   workers: 1, // one shared backend + one small model; don't fan out
-  retries: process.env.CI ? 1 : 0,
+  // No retries — on purpose. A retry passed only because attempt 1 warmed the
+  // LLM cache, so `retries: 1` certified the warm path while a cold-path
+  // regression stayed green (issue #45). run.sh now warms the model before the
+  // test, so attempt 1 must pass on its own; a failure here is a real failure.
+  retries: 0,
   reporter: [["list"]],
   use: {
     baseURL: BASE_URL,

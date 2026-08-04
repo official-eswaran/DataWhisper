@@ -50,6 +50,15 @@ npx playwright test              # expects frontend on E2E_PORT (default 3178)
 - **Timeouts are generous on purpose** (query wait up to 120s). CPU inference is
   slow; a GPU runner will be far faster. Don't tighten these to match a fast box
   and make the suite flaky on a slow one.
-- The second run in a session is much faster than the first — the LLM cache
-  warms on the repeated question. Both are valid; the path is what's under test.
+- **The model is warmed before the test, and there are no retries** (issue #45).
+  `run.sh` makes one throwaway inference call to load the model's weights into
+  RAM *before* Playwright runs, so the timed query is not the one paying for the
+  cold model load. Because that cost is now paid up front, `retries` is `0`:
+  attempt 1 must pass on its own. Previously `retries: 1` hid the problem — the
+  cold first attempt blew the timeout and warmed the cache, and only the retry
+  passed, so the suite reported green while certifying the *warm* path and could
+  not catch a cold-path regression.
+- **This is a smoke test, not a cold-path SLO.** It answers "does the whole flow
+  work end to end?", not "is cold inference fast enough?" — that latency question
+  is issue #25, and needs real staging numbers, not a laptop or a shared runner.
 - Artifacts (`test-results/`, `playwright-report/`) are gitignored.
