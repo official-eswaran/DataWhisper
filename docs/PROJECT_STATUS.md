@@ -25,7 +25,7 @@ finished.
 
 | Area | State |
 |------|-------|
-| Backend tests | **369 passing**, `ruff` clean, **90.4%** coverage, gate raised to **85** (#28) |
+| Backend tests | **396 passing**, `ruff` clean, **90.4%** coverage, gate raised to **85** (#28) |
 | Frontend tests | **78 passing**, 4 of 12 components covered (#27) |
 | Build/runtime | Vite build OK, Node 24 (LTS), dependency audit clean |
 | E2E | Runs in GitHub Actions ✅ — but **passes only on retry**, see #45 |
@@ -56,6 +56,7 @@ finished.
 |----|------|
 | #49 | Coverage gate 70 → 85 (#28); `ISSUE_CHECKLIST.md` as the work queue |
 | — | **NL2SQL accuracy eval** (#16): `backend/evals/`, 57 cases, first measured baseline **78.4%** |
+| — | **GROUP BY key repair** (#52): deterministic AST rewrite; accuracy **78.4% → 88.9%** |
 
 ### Shipped 2026-07-28 (audit session)
 
@@ -75,7 +76,7 @@ finished.
 ```bash
 # Backend (from backend/)
 export SECRET_KEY=$(python3 -c 'import secrets;print(secrets.token_hex(32))') DEBUG=true
-python3 -m pytest                       # expect 369 passed
+python3 -m pytest                       # expect 396 passed
 python3 -m ruff check app tests evals   # expect clean
 python3 -m pip_audit -r requirements.txt --strict   # --strict is what CI runs
 
@@ -197,7 +198,7 @@ Things that are easy to miss when reading the code cold:
   needs Ollama running. Vitest is configured to ignore `e2e/**`; the two runners
   don't overlap. CI job is `.github/workflows/e2e.yml` (manual/nightly, not
   per-PR — it pulls a model). See `frontend/e2e/README.md`.
-- **Accuracy is measured, and it is not 100%.** `backend/evals/` runs 57
+- **Accuracy is measured (88.9%), and it is not 100%.** `backend/evals/` runs 57
   question→answer cases through the real pipeline and compares *results* against
   a reference query (execution accuracy), because many different SQL strings are
   equally correct. `python -m evals` from `backend/`; needs Ollama. The floor
@@ -265,17 +266,18 @@ None are blocking, but they're the honest loose ends:
   `ci.yml` / `e2e.yml`. Node 20 sat three months past EOL before anyone noticed.
   Dates to watch are recorded in `.github/dependabot.yml`: python 3.12 →
   2028-10-31, node 24 → 2028-04-30.
-- **The model drops the GROUP BY key from the SELECT list — measured, 30% on
-  grouped questions.** The first eval run (2026-08-02) put overall accuracy at
-  **78.4%**, and nine of the ten always-failing cases are this one bug: asked
-  "revenue by region", `llama3.2:3b` generates
-  `SELECT SUM(total_amount) FROM sales_data GROUP BY region` — a column of
-  unlabelled numbers with no way to tell which region each belongs to. The
-  prompt already forbids exactly this in rule 8, with the correct example
-  spelled out, and the model does it anyway; the grouped questions that *do*
-  pass are the ones with a matching few-shot example further down the prompt.
-  So the fix is likely more examples rather than a stronger rule. Whoever picks
-  this up: the eval already pins it, so the change is measurable.
+- **Prompting is not a control; a deterministic rewrite is.** The eval's first
+  run found the model dropping the GROUP BY key from the projection
+  (`SELECT SUM(total_amount) FROM sales_data GROUP BY region` — unlabelled
+  numbers), scoring grouped questions at 30% *while the prompt forbade exactly
+  that in capitals*. Two fixes were measured. Adding few-shot examples moved
+  `group_by` 30% → 44% and only for the table the examples named — and it
+  **cost 5 points overall**, because the new examples pulled the model toward
+  projecting bare measures and broke two unrelated cases that had been passing
+  3/3. Rewriting the AST after validation (`nl2sql/sql_repair.py`) took
+  `group_by` to 93% and overall accuracy 78.4% → **88.9%**. The examples were
+  reverted. Read this before "improving" accuracy by editing the prompt: measure
+  the whole eval, not the category you aimed at.
 - **The `rows_processed` ceilings are still guesses, but no longer unmeasured.**
   10M/month on free and 50M on pro were picked without usage data. The platform
   now measures bytes-per-row from every upload of ≥1,000 rows and
@@ -311,9 +313,8 @@ one item, one PR, merged before the next starts.
    measure the cache and the limiter instead of the app.
 3. **Stripe test-mode round trip** (#19). The money path is fully unit-tested
    with stubs and has never touched a real account.
-4. ~~**NL2SQL accuracy eval** (#16)~~ — done 2026-08-02. Baseline **78.4%**.
-   It immediately found a real bug; see the GROUP BY item under "Known gaps",
-   which is now the most valuable code fix on the list.
+4. ~~**NL2SQL accuracy eval** (#16)~~ — done 2026-08-02, and it immediately
+   found a real bug (#52, fixed 2026-08-03). Accuracy 78.4% → **88.9%**.
 
 **P1 — real bugs and abuse vectors.**
 

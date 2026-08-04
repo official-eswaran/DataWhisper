@@ -49,26 +49,25 @@ fail would make "the case set is valid" meaningless.
 
 **It immediately paid for itself** → see item 2a below.
 
-### 2a. Model drops the GROUP BY key from SELECT (new, from #16)
+### 2a. Model drops the GROUP BY key from SELECT (#52)
 
-- [ ] **Merged**
+- [x] **Merged** — 2026-08-03
 
-Not an issue when this checklist was written; the eval found it. Nine of the ten
-consistently-failing cases are this single bug, and `group_by` scores **30%**.
+Found by the eval, not by review. Fixed with a deterministic AST rewrite
+(`app/nl2sql/sql_repair.py`) applied after validation on both the streaming and
+non-streaming paths: if a plain `GROUP BY` key is missing from the projection,
+it is added. Uses DuckDB's own `json_serialize_sql` round-trip, so the parser
+doing the analysis is the one that executes the query — no new dependency, and
+no regex on SQL.
 
-Asked "revenue by region", the model generates
-`SELECT SUM(total_amount) FROM sales_data GROUP BY region` — unlabelled numbers
-with no way to tell which region is which. `prompt_builder.py` rule 8 already
-forbids precisely this and shows the correct form; the model ignores it. The
-grouped questions that *do* pass are the ones with a matching few-shot example
-lower in the prompt, which points at adding examples rather than sharpening the
-rule.
+**Accuracy 78.4% → 88.9%**; `group_by` 30% → 93%.
 
-**Files** — `backend/app/nl2sql/prompt_builder.py`
-
-**Done when** `python -m evals --category group_by` improves and the overall
-baseline is re-recorded. Expect roughly +15 points overall — this is the
-cheapest large accuracy win available, and it is now measurable.
+**The lesson is in what didn't work.** The obvious fix — more few-shot
+examples — moved `group_by` to only 44%, helped just the table the examples
+named, and **cost 5 points overall** by nudging the model toward bare measures,
+breaking two unrelated cases that had been passing 3/3. It was reverted. The
+prompt had forbidden this exact mistake in capitals since before the eval
+existed. For a 3B model, prompt text is a suggestion; a rewrite is a guarantee.
 
 ### 2. `#45` — E2E passes only on retry (P1)
 
