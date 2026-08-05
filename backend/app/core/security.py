@@ -129,3 +129,31 @@ def require_admin(user: Annotated[dict, Depends(get_current_user)]) -> dict:
     if user.get("role") not in ("owner", "admin"):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Admin access required")
     return user
+
+
+def require_verified_email(user: Annotated[dict, Depends(get_current_user)]) -> dict:
+    """Block the expensive endpoints until the org's owner confirms their address.
+
+    Issue #21. Applied to *queries*, not to login or registration: the account
+    must still be reachable so its owner can land in the UI, read why they are
+    blocked and ask for a resend. Gating registration itself would only move the
+    dead end earlier.
+
+    Inert when ``should_require_email_verification`` is false, which is the
+    default under DEBUG — dev and the test suite are unaffected without opting
+    out of anything.
+    """
+    if not settings.should_require_email_verification:
+        return user
+
+    # Imported here rather than at module scope: app.core.database imports from
+    # this module for password hashing, and a top-level import would cycle.
+    from app.core.database import is_org_email_verified
+
+    if not is_org_email_verified(user.get("org_id", -1)):
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Confirm your email address before running queries. "
+            "Request a new link at POST /api/auth/verify-email/resend.",
+        )
+    return user
