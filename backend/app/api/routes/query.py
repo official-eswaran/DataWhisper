@@ -36,7 +36,11 @@ from app.nl2sql.llm_client import llm_cache_lookup, llm_cache_store, stream_loca
 from app.nl2sql.pipeline import NL2SQLPipeline, execute_with_healing, get_schema_info
 from app.nl2sql.prompt_builder import build_nl2sql_prompt
 from app.nl2sql.result_formatter import build_result, chat_result
-from app.nl2sql.sql_repair import add_distinct_for_value_listing, add_missing_group_keys
+from app.nl2sql.sql_repair import (
+    add_distinct_for_value_listing,
+    add_missing_group_keys,
+    repair_date_period_bounds,
+)
 from app.nl2sql.sql_validator import validate_sql
 
 logger = logging.getLogger("datawhisper.query")
@@ -242,6 +246,9 @@ async def ask_question_stream(
             # audited and shown to the user must be the SQL that actually ran.
             generated_sql = add_missing_group_keys(generated_sql, conn)
             generated_sql = add_distinct_for_value_listing(
+                generated_sql, req.question, conn
+            )
+            generated_sql = repair_date_period_bounds(
                 generated_sql, req.question, conn
             )
 

@@ -252,7 +252,11 @@ that. The floor is 80; the current baseline is 88.9%.
 
 ### 7b. `#69` — Date period expressions become wrong boundaries (P2)
 
-- [ ] **Merged**
+- [x] **Merged** — 2026-08-06. `date` **7/15 → 13/15**, overall 87.1% → **90.6%**,
+  and every other category unchanged. Third deterministic repair
+  (`repair_date_period_bounds`). The two residual date failures are model
+  non-determinism (an invented upper bound; a `LIKE '%03-2024%'`), not this
+  defect — the repair correctly declines both.
 
 `date` is now the largest category gap (**7/15**), having overtaken `distinct`
 when #58 landed. All three failures are one defect: a period expression becomes
