@@ -1,22 +1,22 @@
 {
-  "recorded_at": "2026-08-06T00:00:00+00:00",
+  "recorded_at": "2026-08-06T04:00:00+00:00",
   "model": "llama3.2:3b",
   "repeat": 3,
   "cache_enabled": false,
   "hardware": "dev laptop, CPU inference",
-  "accuracy": 87.1,
+  "accuracy": 90.6,
   "floor": 80.0,
-  "observed_range": "86.0 - 91.2 over three rounds (unchanged; see note)",
-  "note": "The headline number did not move and is not claimed to. `distinct` went 60% -> 100% on the DISTINCT repair (#58), a mechanical +6 attempts; `date`, `group_by` and `having` gave back 9 between them, and every case behind those losses is already listed under non_deterministic or was failing before. 87.1 sits inside the band the previous baseline recorded, so this is one sample of a noisy measurement — not a regression and not an improvement. Only the per-category distinct figure is a real change.",
+  "observed_range": "86.0 - 91.2 over three rounds (pre-#69; not re-measured)",
+  "note": "The date period repair (#69). Unlike the previous round this is a real improvement and the category table shows why: `date` 7/15 -> 13/15, and every other category is byte-identical to the run before it. The +6 overall is exactly the date gain, with no collateral — which is what the #52/#59/#60 prompt attempts could never achieve.",
   "previous": {
-    "accuracy": 88.9,
+    "accuracy": 87.1,
     "floor": 80.0,
-    "recorded_at": "2026-08-03T15:44:43+00:00",
-    "note": "After the GROUP BY key repair (#52), before the DISTINCT repair (#58)."
+    "recorded_at": "2026-08-06T00:00:00+00:00",
+    "note": "After the DISTINCT repair (#58), before the date repair (#69). `date` was 7/15."
   },
   "by_category": {
     "aggregate": { "passed": 42, "total": 42 },
-    "date": { "passed": 7, "total": 15 },
+    "date": { "passed": 13, "total": 15 },
     "distinct": { "passed": 15, "total": 15 },
     "filter": { "passed": 30, "total": 33 },
     "group_by": { "passed": 22, "total": 27 },
@@ -25,19 +25,19 @@
     "ranking": { "passed": 21, "total": 24 }
   },
   "known_failures": {
-    "note": "#58 is fixed deterministically and `distinct` is now 15/15. #59 and #60 remain open: prompt fixes for both were written, measured and reverted — see PROJECT_STATUS.md. What remains is dominated by date handling, which is now the largest single category loss and has no issue of its own yet.",
+    "note": "Nothing in the date category fails on every run any more. #58 and #69 are fixed deterministically; #59 and #60 remain open with a failed prompt attempt each on record (see PROJECT_STATUS.md). `group_by` and `having` are now the weakest categories, and both are dominated by cases already known to be non-deterministic rather than by a named defect.",
     "always_failing": {
-      "sales_cheapest_product": "#59 — returns the measure, not the entity: SELECT MIN(price) instead of the product",
-      "emp_joined_2021": "a year-range filter becomes an equality test against a single date (join_date = '2021-01-01')",
-      "emp_joined_before_2020": "projects an extra column the reference does not (emp_name, join_date vs emp_name)"
+      "sales_cheapest_product": "#59 — returns the measure, not the entity: SELECT MIN(price) instead of the product"
     },
     "non_deterministic": [
-      "sales_electronics_by_region",
+      "emp_joined_2021",
       "sales_march_revenue",
+      "sales_electronics_by_region",
       "sales_products_over_200k",
       "emp_best_performer",
       "sales_laptop_units"
-    ]
+    ],
+    "date_residue": "emp_joined_2021 and sales_march_revenue each pass 2/3 rather than 0-1/3. Neither remaining failure is the #69 defect: one emits two comparisons with an invented upper bound (> '2020-12-31' AND <= '2021-03-15'), the other emits LIKE '%03-2024%', which is not a comparison at all. The repair correctly declines both. Fixing these means getting the model to stop inventing shapes, not widening a bound."
   },
-  "floor_rationale": "80 sits 6 points below the lowest observed round (86.0) and is unchanged. The floor detects a regression, not a target: it trips if a whole category collapses, but not on this model's ordinary run-to-run variance — of which this round is a good illustration. Raise it only when a real improvement lands and the *category* figures, not the headline, show it."
+  "floor_rationale": "Still 80, deliberately, despite 90.6. There is exactly ONE full round since #69, and raising a CI floor on a single sample of a measurement whose own recorded spread is ~5 points is how a gate starts flapping. `eval.yml` runs weekly — revisit once three or more post-#69 rounds exist, then set it ~6 points under the lowest. The floor's job is catching a category collapse, which 80 still does."
 }
