@@ -22,6 +22,8 @@ sample_data/massive_*.csv
 .coverage
 coverage.xml
 htmlcov/
+# Vitest v8 coverage output (issue #27)
+frontend/coverage/
 .pytest_cache/
 .ruff_cache/
 *.egg-info/
