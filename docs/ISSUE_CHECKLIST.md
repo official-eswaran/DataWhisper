@@ -250,6 +250,44 @@ returns early. That is a structural finding, not a prompt tweak.
 edits regressed unrelated categories, and only a full `--repeat 3` run catches
 that. The floor is 80; the current baseline is 88.9%.
 
+### 7b. `#69` — Date period expressions become wrong boundaries (P2)
+
+- [ ] **Merged**
+
+`date` is now the largest category gap (**7/15**), having overtaken `distinct`
+when #58 landed. All three failures are one defect: a period expression becomes
+a wrong boundary instead of a range — "in March 2024" and "in 2021" collapse to
+an equality against the first day, "before 2020" becomes `< '2020-12-31'` and
+admits the entire year it is meant to exclude. Each returns a plausible,
+silently wrong number.
+
+**Two dead ends already ruled out** — don't re-derive them. It is *not* #61
+(dates typed `TIMESTAMP_NS`; genuinely fixed, and this SQL binds and runs), and
+it is *not* eval strictness over an extra projected column (`subset_ok=True`
+means the comparator permutes and matches on one column; the failure is row
+count).
+
+**Try a deterministic repair first.** This is a better candidate than #58 was:
+the correct half-open range is *derivable* from the period in the question,
+where #59's entity column was a guess. Prompt rules come second, and only
+validated on the full eval — see 7a for what happens otherwise.
+
+`sales_q1_orders` and `sales_h2_orders` pass 3/3 and phrase their range
+explicitly; they are what a clumsy fix breaks.
+
+### 7c. `#70` — Seven frontend components still untested (P2)
+
+- [ ] **Merged**
+
+Follow-up to #27, which delivered the gate (the part that mattered) plus
+`FileUpload`. `Login`, `AdminConsole`, `AuditLogs`, `AccountSettings`,
+`Dashboard`, `Sidebar`, `ErrorBoundary` remain. `AdminConsole`, `AuditLogs` and
+`AccountSettings` manipulate other people's accounts and audit data, so they
+carry the most risk per untested line.
+
+**One component per PR**, and **raise the thresholds in `vite.config.js` as each
+lands** — a gate that never moves is decoration, not a ratchet.
+
 ### 8. `#31` — Billing feature gaps (P2)
 
 - [ ] **Merged**
