@@ -25,7 +25,7 @@ from app.core.database import require_user_duckdb, user_can_access_session, writ
 from app.core.quota import QUERIES, ROWS_PROCESSED, enforce_quota
 from app.core.quota import record as quota_record
 from app.core.ratelimit import limiter
-from app.core.security import get_current_user
+from app.core.security import require_verified_email
 from app.core.session_store import conversation_store
 from app.nl2sql.intent_classifier import (
     OFF_TOPIC_RESPONSE,
@@ -129,7 +129,7 @@ async def _iter_llm_tokens(prompt: str):
 async def ask_question(
     request: Request,
     req: QueryRequest,
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[dict, Depends(require_verified_email)],
 ):
     _authorize(req.session_id, current_user)
     username = current_user.get("sub", "unknown")
@@ -170,7 +170,7 @@ async def ask_question(
 async def ask_question_stream(
     request: Request,
     req: QueryRequest,
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[dict, Depends(require_verified_email)],
 ):
     _authorize(req.session_id, current_user)
     username = current_user.get("sub", "unknown")

@@ -8,6 +8,7 @@
 NOTE: no ``from __future__ import annotations`` — combined with the slowapi
 decorator it makes FastAPI misclassify the Pydantic body as a query parameter.
 """
+import logging
 import re
 from datetime import UTC, datetime
 from typing import Annotated
@@ -18,6 +19,8 @@ from pydantic import BaseModel, EmailStr, field_validator
 
 from app.core.config import settings
 from app.core.database import (
+    consume_email_verification_token,
+    create_email_verification_token,
     create_organization_with_owner,
     get_user_by_username,
     is_refresh_token_valid,
@@ -27,6 +30,7 @@ from app.core.database import (
     revoke_refresh_token,
     store_refresh_token,
 )
+from app.core.mailer import send_verification_email
 from app.core.ratelimit import limiter
 from app.core.security import (
     TOKEN_TYPE_REFRESH,
@@ -39,6 +43,8 @@ from app.core.security import (
     verify_dummy_password,
     verify_password,
 )
+
+logger = logging.getLogger("datawhisper.auth")
 
 router = APIRouter()
 
@@ -166,7 +172,91 @@ def register(request: Request, response: Response, req: RegisterRequest):
         )
     except ValueError:
         raise HTTPException(status.HTTP_409_CONFLICT, "Username or email already exists")
-    return _issue_tokens(response, created["username"], created["role"], created["org_id"])
+
+    _send_verification(created["username"], str(req.email).lower())
+
+    tokens = _issue_tokens(response, created["username"], created["role"], created["org_id"])
+    # The client needs to know it has a session but not yet the right to query,
+    # so it can show "check your mail" instead of letting the user hit a 403 on
+    # their first question (issue #21).
+    tokens["email_verified"] = not settings.should_require_email_verification
+    return tokens
+
+
+def _send_verification(username: str, email: str) -> None:
+    """Mint a token and hand it to the mailer. Never raises.
+
+    Registration has already committed by the time this runs, so a mail problem
+    must not surface as a failed signup — the account exists and /resend is the
+    recovery path.
+    """
+    try:
+        token = create_email_verification_token(
+            username, settings.EMAIL_VERIFICATION_TTL_HOURS
+        )
+        send_verification_email(email, token)
+    except Exception:  # noqa: BLE001 - deliberately swallowed, see docstring
+        logger.exception("Failed to issue verification email for %s", username)
+
+
+class VerifyEmailRequest(BaseModel):
+    token: str
+
+    @field_validator("token")
+    @classmethod
+    def check_token(cls, v: str) -> str:
+        v = v.strip()
+        if not v or len(v) > 200:
+            raise ValueError("Invalid token")
+        return v
+
+
+@router.post("/verify-email")
+@limiter.limit(settings.RATE_LIMIT_LOGIN)
+def verify_email(request: Request, req: VerifyEmailRequest):
+    """Consume a verification token and mark the address confirmed.
+
+    Unauthenticated by design: the link is followed from a mail client, which
+    carries no session. Possession of the token is the proof, which is why it is
+    single-use, expiring, and stored only as a hash.
+    """
+    username = consume_email_verification_token(req.token)
+    if username is None:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "This verification link is invalid, expired, or already used. "
+            "Request a new one.",
+        )
+    return {"detail": "Email verified", "username": username}
+
+
+class ResendVerificationRequest(BaseModel):
+    username: str
+
+    @field_validator("username")
+    @classmethod
+    def clean_username(cls, v: str) -> str:
+        v = v.strip().lower()
+        if not v or len(v) > 50:
+            raise ValueError("Invalid username")
+        return v
+
+
+@router.post("/verify-email/resend")
+@limiter.limit(settings.RATE_LIMIT_REGISTER)
+def resend_verification(request: Request, req: ResendVerificationRequest):
+    """Re-issue a verification link.
+
+    Always returns the same response whether or not the account exists or is
+    already verified — otherwise this becomes an account-enumeration oracle, the
+    exact leak /login goes to some trouble to avoid. It carries the registration
+    rate limit rather than the looser login one, because sending mail on demand
+    is itself the thing worth limiting.
+    """
+    user = get_user_by_username(req.username)
+    if user is not None and not user["email_verified"]:
+        _send_verification(user["username"], user["email"])
+    return {"detail": "If that account exists and is unverified, a new link has been sent."}
 
 
 @router.post("/login")
@@ -207,7 +297,13 @@ def login(request: Request, response: Response, req: LoginRequest):
         )
 
     record_successful_login(req.username)
-    return _issue_tokens(response, req.username, user["role"], user["org_id"])
+    tokens = _issue_tokens(response, req.username, user["role"], user["org_id"])
+    # Lets the client render the "confirm your email" state on load rather than
+    # discovering it from a 403 on the first query (issue #21).
+    tokens["email_verified"] = (
+        user["email_verified"] or not settings.should_require_email_verification
+    )
+    return tokens
 
 
 @router.post("/refresh")

@@ -83,6 +83,25 @@ users = Table(
     Column("locked_until", DateTime(timezone=True)),
     Column("last_login", DateTime(timezone=True)),
     Column("created_at", DateTime(timezone=True), server_default=func.now()),
+    # Issue #21. Defaults false so every *new* account starts unverified; the
+    # migration grandfathers existing rows to true, because turning the gate on
+    # must not lock out accounts that predate it.
+    Column("email_verified", Boolean, nullable=False, default=False),
+)
+
+# Single-use email verification tokens (issue #21).
+#
+# Only the SHA-256 of the token is stored, for the same reason password hashes
+# are: a leaked metadata DB otherwise hands over every pending account. The
+# plaintext exists only in the mail.
+email_verification_tokens = Table(
+    "email_verification_tokens", metadata,
+    Column("token_hash", String(64), primary_key=True),
+    Column("username", String(50), nullable=False),
+    Column("expires_at", DateTime(timezone=True), nullable=False),
+    Column("used_at", DateTime(timezone=True)),
+    Column("created_at", DateTime(timezone=True), server_default=func.now()),
+    Index("ix_email_verification_username", "username"),
 )
 
 sessions = Table(
@@ -318,13 +337,18 @@ def _seed_demo_org(conn) -> None:
     conn.execute(
         insert(users),
         [
+            # Seeded accounts are verified: there is no mailbox behind
+            # *@demo.local to receive a link, and the test fixtures log in as
+            # these users (issue #21).
             {
                 "org_id": org_id, "username": "ceo", "email": "ceo@demo.local",
                 "password_hash": hash_password(settings.ADMIN_PASSWORD), "role": "owner",
+                "email_verified": True,
             },
             {
                 "org_id": org_id, "username": "manager", "email": "manager@demo.local",
                 "password_hash": hash_password(settings.MANAGER_PASSWORD), "role": "member",
+                "email_verified": True,
             },
         ],
     )
@@ -372,6 +396,10 @@ def create_user_in_org(
                 insert(users).values(
                     org_id=org_id, username=username, email=email,
                     password_hash=password_hash, role=role,
+                    # An admin inside an existing org vouched for this address,
+                    # and the org's own verification is what gates queries
+                    # (issue #21) — so there is nothing for this user to prove.
+                    email_verified=True,
                 )
             )
         except IntegrityError:
@@ -413,7 +441,7 @@ def get_user_by_username(username: str) -> dict | None:
             select(
                 users.c.username, users.c.password_hash, users.c.role,
                 users.c.is_active, users.c.failed_attempts, users.c.locked_until,
-                users.c.org_id, users.c.email,
+                users.c.org_id, users.c.email, users.c.email_verified,
             ).where(users.c.username == username)
         ).first()
     if not row:
@@ -427,7 +455,110 @@ def get_user_by_username(username: str) -> dict | None:
         "locked_until": row.locked_until,
         "org_id": row.org_id,
         "email": row.email,
+        "email_verified": bool(row.email_verified),
     }
+
+
+# ── Email verification (issue #21) ────────────────────────────────────────────
+
+
+def _hash_verification_token(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+def create_email_verification_token(username: str, ttl_hours: int) -> str:
+    """Mint a single-use verification token and return the *plaintext*.
+
+    Any previously issued tokens for the user are dropped first, so a resend
+    invalidates the older link rather than leaving several live at once.
+    """
+    token = secrets.token_urlsafe(32)
+    expires_at = datetime.now(UTC) + timedelta(hours=ttl_hours)
+    with get_engine().begin() as conn:
+        conn.execute(
+            delete(email_verification_tokens).where(
+                email_verification_tokens.c.username == username
+            )
+        )
+        conn.execute(
+            insert(email_verification_tokens).values(
+                token_hash=_hash_verification_token(token),
+                username=username,
+                expires_at=expires_at,
+            )
+        )
+    return token
+
+
+def consume_email_verification_token(token: str) -> str | None:
+    """Verify a user from a token. Returns the username, or None if unusable.
+
+    Single-use and time-bounded: an already-used or expired token returns None
+    rather than silently re-verifying, so a leaked link from an old mail is
+    inert. The whole thing runs in one transaction, so two racing requests can't
+    both consume the same token.
+    """
+    now = datetime.now(UTC)
+    with get_engine().begin() as conn:
+        row = conn.execute(
+            select(
+                email_verification_tokens.c.username,
+                email_verification_tokens.c.expires_at,
+                email_verification_tokens.c.used_at,
+            ).where(email_verification_tokens.c.token_hash == _hash_verification_token(token))
+        ).first()
+        if row is None or row.used_at is not None:
+            return None
+
+        expires_at = row.expires_at
+        if expires_at.tzinfo is None:
+            # SQLite hands back naive datetimes; compare in UTC either way.
+            expires_at = expires_at.replace(tzinfo=UTC)
+        if expires_at <= now:
+            return None
+
+        conn.execute(
+            update(email_verification_tokens)
+            .where(
+                email_verification_tokens.c.token_hash == _hash_verification_token(token)
+            )
+            .values(used_at=now)
+        )
+        conn.execute(
+            update(users).where(users.c.username == row.username).values(email_verified=True)
+        )
+    return row.username
+
+
+def is_email_verified(username: str) -> bool:
+    with get_engine().connect() as conn:
+        row = conn.execute(
+            select(users.c.email_verified).where(users.c.username == username)
+        ).first()
+    # A missing user is not "verified" — the caller decides what to do about it.
+    return bool(row.email_verified) if row else False
+
+
+def is_org_email_verified(org_id: int) -> bool:
+    """Whether an org's *owner* has confirmed their address (issue #21).
+
+    The gate is per-org rather than per-user on purpose. Quota is an org-level
+    budget and the abuse path is "register another org", so the org is the unit
+    that has to be paid for once. Checking each user individually would also
+    leave a hole: an unverified owner could create a member through the admin
+    route and run queries as them.
+
+    An org with no owner row is treated as unverified — that state shouldn't
+    exist (signup creates the owner in the same transaction), and failing closed
+    is the right side to err on for a gate.
+    """
+    with get_engine().connect() as conn:
+        row = conn.execute(
+            select(users.c.email_verified)
+            .where(users.c.org_id == org_id, users.c.role == "owner")
+            .order_by(users.c.id)
+        ).first()
+    return bool(row.email_verified) if row else False
 
 
 def record_failed_login(username: str) -> None:

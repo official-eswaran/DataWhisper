@@ -97,6 +97,37 @@ class Settings(BaseSettings):
     # current behaviour is unchanged.
     SIGNUPS_OPEN: bool = True
 
+    # ── Email verification (issue #21) ──────────────────────────────────────────
+    # The rate limit above only slows a single IP, and SIGNUPS_OPEN=false is
+    # all-or-nothing. Requiring a verified address before *queries run* puts a
+    # per-identity cost on the abuse path while leaving registration itself open.
+    #
+    # None = "auto": follow production, i.e. required when DEBUG is false. This
+    # mirrors SEED_DEMO_DATA rather than defaulting to a bare bool, so dev and
+    # the test suite are unaffected without anyone having to set anything.
+    REQUIRE_EMAIL_VERIFICATION: bool | None = None
+
+    # Gate the work, not the account: registration and login still succeed and
+    # return tokens, so the user can reach a UI that tells them to check their
+    # mail. Only the expensive endpoints refuse.
+    EMAIL_VERIFICATION_TTL_HOURS: int = 24
+    # Public origin used to build the link in the mail. Empty → the mailer emits
+    # the bare token and says so, which is all a no-op transport can honestly do.
+    APP_BASE_URL: str = ""
+
+    @property
+    def should_require_email_verification(self) -> bool:
+        """Whether unverified accounts are blocked from queries. Auto-off in dev."""
+        if self.REQUIRE_EMAIL_VERIFICATION is None:
+            return not self.DEBUG
+        return self.REQUIRE_EMAIL_VERIFICATION
+
+    # ── Outbound mail ───────────────────────────────────────────────────────────
+    # Unset → the mailer is a no-op that logs, exactly like SENTRY_DSN and the
+    # OTel endpoint. Real SMTP/provider wiring is deliberately still open (the
+    # deferred half of issue #21); nothing here reaches the network yet.
+    SMTP_HOST: str = ""
+
     # ── Shared state / scaling ──────────────────────────────────────────────────
     # When set (e.g. redis://redis:6379/0), the conversation store and rate
     # limiter use Redis, making WEB_CONCURRENCY>1 and multi-replica correct.
