@@ -1,6 +1,6 @@
 # Project status & how to resume
 
-**Last updated:** 2026-07-28
+**Last updated:** 2026-08-06
 **Branch of record:** `main`.
 
 > ⚠️ **`master` is not the branch of record and does not exist on the remote.**
@@ -25,11 +25,11 @@ finished.
 
 | Area | State |
 |------|-------|
-| Backend tests | **396 passing**, `ruff` clean, **90.4%** coverage, gate raised to **85** (#28) |
-| Frontend tests | **78 passing**, 4 of 12 components covered (#27) |
+| Backend tests | **488 passing**, `ruff` clean, **91.15%** coverage, gate **85** (#28) |
+| Frontend tests | **94 passing**, 5 of 12 components covered; **coverage gate now enforced** (#27) |
 | Build/runtime | Vite build OK, Node 24 (LTS), dependency audit clean |
-| E2E | Runs in GitHub Actions ✅; cold-path fix in review (model warm-up + `retries: 0`), see #45 |
-| Migrations | Head is `a81e5f30c6d2` (signed audit checkpoints) |
+| E2E | Runs in GitHub Actions ✅; passes on attempt 1 since PR #63 (#45 fixed) |
+| Migrations | Head is `b92c4d17ae03` (email verification, #21) |
 | Dependencies | Dependabot active; majors gated for pip/npm/docker |
 
 > **Dependency advisories expire on their own.** Two CI gates have already gone
@@ -58,6 +58,16 @@ finished.
 | — | **NL2SQL accuracy eval** (#16): `backend/evals/`, 57 cases, first measured baseline **78.4%** |
 | — | **GROUP BY key repair** (#52): deterministic AST rewrite; accuracy **78.4% → 88.9%** |
 
+### Shipped 2026-08-06
+
+| Issue | What |
+|-------|------|
+| #21 | **Email verification gates queries.** Per-org, keyed on the owner — a per-user check let an unverified owner create a member via the admin route and query as them. Off under DEBUG; existing accounts grandfathered by the migration. Mail transport is a no-op interface (SMTP/captcha still deferred). |
+| #47 | **EOL-runtime watch.** `scripts/check_eol.py` + monthly `eol-watch.yml`, checking `endoflife.date`. Parses pins from the real files and *fails* rather than reporting all-clear if one stops matching. |
+| #27 | **Frontend coverage gate.** `npm test` is now `vitest run --coverage`; `FileUpload` covered. |
+| #58 | **DISTINCT repair.** `distinct` 60% → **100%**, deterministic. |
+| #59, #60 | **Attempted, measured, reverted — still open.** See the note below. |
+
 ### Shipped 2026-07-28 (audit session)
 
 | PR | What |
@@ -76,14 +86,14 @@ finished.
 ```bash
 # Backend (from backend/)
 export SECRET_KEY=$(python3 -c 'import secrets;print(secrets.token_hex(32))') DEBUG=true
-python3 -m pytest                       # expect 396 passed
+python3 -m pytest                       # expect 488 passed
 python3 -m ruff check app tests evals   # expect clean
 python3 -m pip_audit -r requirements.txt --strict   # --strict is what CI runs
 
 # Frontend (from frontend/)
 npm ci
 npm run build                           # outputs to build/
-npm test                                # expect 78 passed
+npm test                                # expect 94 passed; enforces coverage thresholds
 npm audit --omit=dev                    # see the allowlist note in ci.yml
 ```
 
@@ -158,6 +168,24 @@ Things that are easy to miss when reading the code cold:
   cookie before rendering routes — that's the brief boot gate in `App.jsx`. Deploy
   note: this assumes SPA and API share an origin (prod nginx / dev vite proxy).
   A split-origin setup needs SameSite=None+Secure and CORS `allow_credentials`.
+- **Email verification gates queries, and it is per-org, not per-user
+  (issue #21).** `require_verified_email` reads the *owner's* `email_verified`
+  via `is_org_email_verified`. Quota is an org-level budget and the abuse path
+  is "register another org", so the org is the unit that has to be paid for
+  once — and a per-user check leaves a hole, because an unverified owner can
+  create a member through the admin route and query as them. Admin-created users
+  are therefore marked verified on insert; their org's status is what counts.
+  The gate follows `REQUIRE_EMAIL_VERIFICATION`, which is `None` = auto = "on
+  when `DEBUG=false`", mirroring `SEED_DEMO_DATA` — so dev and the test suite are
+  unaffected with nothing set. Registration and login still succeed and return
+  tokens (plus `email_verified`), because the user needs a session to reach the
+  UI that tells them to check their mail. **The migration grandfathers every
+  existing user to verified**; switching this on under orgs that predate it must
+  not lock them out. Tokens are single-use, expiring, stored as SHA-256 only, and
+  a resend invalidates the previous one and returns an identical response for
+  unknown accounts (no enumeration oracle). `app/core/mailer.py` is a no-op that
+  logs unless `SMTP_HOST` is set — and if it *is* set with no transport
+  implemented, it logs an error rather than silently stranding users.
 - **Demo accounts don't seed in production.** `init_db` seeds `ceo`/`manager`
   only when `settings.should_seed_demo` — which follows `DEBUG` unless
   `SEED_DEMO_DATA` is set (issue #23). So dev/test get the demo org and prod
@@ -234,7 +262,7 @@ None are blocking, but they're the honest loose ends:
 - **The billing UI has never seen a real Stripe redirect.** `BillingCard` is
   unit-tested with the API mocked, but no browser has actually made the round
   trip to Stripe and back.
-- **The E2E cold-path masking is being fixed (issue #45, PR in review).**
+- ~~**The E2E cold-path masking (#45)**~~ — **fixed**, merged 2026-08-05 (#63).
   Background: it has executed on a hosted runner (2026-07-28) and nightly since
   2026-07-25, but on the manual run attempt 1 blew the 120s `expect` timeout on
   cold CPU inference and the retry passed in 3.1s off a warm LLM cache — so
@@ -244,17 +272,22 @@ None are blocking, but they're the honest loose ends:
   no longer pays model load, and `retries` is now `0` so attempt 1 must pass on
   its own. Whether cold inference is *supposed* to be this slow is still #25's
   question, answered against real staging, not a shared runner.
-- **Open signup has a rate limit + kill switch, but no verification (issue
-  #21).** Registration is now capped at `RATE_LIMIT_REGISTER` (5/hour/IP) and
-  can be closed entirely with `SIGNUPS_OPEN=false`. The complete fix — email
-  verification or captcha before an org gets free quota — still needs email/
-  captcha infra that isn't here.
-- **The frontend covers 4 of its 12 components, and CI has no coverage gate
-  (issue #27).** `ResultView`, `ChatWindow`, `Signup` and `BillingCard` are
-  tested (78 tests); `FileUpload`, `Login`, `AdminConsole`, `AuditLogs`,
-  `AccountSettings`, `Dashboard`, `Sidebar` and `ErrorBoundary` are not.
-  `FileUpload` is next in value. Unlike the backend, `npm test` runs with no
-  threshold at all, so coverage can regress silently.
+- ~~**Open signup has no verification (#21)**~~ — **half fixed** 2026-08-06.
+  Queries now require a confirmed address (`REQUIRE_EMAIL_VERIFICATION`,
+  auto-on when `DEBUG=false`), gated per-org on the owner. **The deferred half
+  is real and still open:** there is no mail transport, so with `SMTP_HOST`
+  unset the verification link is only ever written to the log. Fine for
+  self-hosting, *not* fine for a public signup flow — wiring SMTP/a provider (or
+  hCaptcha instead) is Track B and needs an account.
+- ~~**No frontend coverage gate (#27)**~~ — **gate fixed** 2026-08-06:
+  `npm test` is `vitest run --coverage` with thresholds in `vite.config.js`
+  (60 statements / 85 branches / 50 functions), enforced locally and in CI.
+  Proven: deleting a suite leaves 78 green tests and exits 1.
+  **Seven components remain uncovered** — `Login`, `AdminConsole`, `AuditLogs`,
+  `AccountSettings`, `Dashboard`, `Sidebar`, `ErrorBoundary`. Raise the
+  thresholds as each lands. The coverage config needs its explicit `include`:
+  without it the v8 provider also measures `build/assets/*.js` and reports a
+  number ~10 points below the truth.
 - ~~**The backend coverage gate is 70% while actual coverage is 90.4%**~~ —
   **fixed:** the gate is now 85 (#28). 85 rather than 90 because
   `core/billing.py` sits at 82%, so a 90 gate would fail on any billing change
@@ -263,20 +296,36 @@ None are blocking, but they're the honest loose ends:
 - ~~**PDF export truncates every field at 60 characters (#46)**~~ — fixed
   2026-08-03 (PR #51): cells wrap as ReportLab `Paragraph`s, with a 4000-char
   runaway guard in place of the 60-char cap.
-- **Four measured accuracy defects remain (#58–#61), from the eval.** After #52
-  the eval still fails five cases every run, and they are four distinct bugs:
-  `DISTINCT` omitted (#58), superlative questions returning the measure instead
-  of the entity (#59), "how many X sold" counting orders instead of summing
-  units (#60), and date columns typed `TIMESTAMP_NS` (#61). **#61 also found
-  that the self-heal in `pipeline.py` is unreachable for bind errors** — the
-  `EXPLAIN` check in `validate_and_fix_sql` rejects them and returns early, so
-  the retry prompt is close to dead code. That half is structural, not
-  accuracy.
-- **Nothing watches for EOL runtimes (issue #47).** Dependabot ignores docker
-  majors by design, and it structurally cannot see the `node-version` inputs in
-  `ci.yml` / `e2e.yml`. Node 20 sat three months past EOL before anyone noticed.
-  Dates to watch are recorded in `.github/dependabot.yml`: python 3.12 →
-  2028-10-31, node 24 → 2028-04-30.
+- **Two of the four eval-found defects remain (#59, #60).** #61 was fixed
+  2026-08-04 and #58 on 2026-08-06 (`distinct` 60% → **100%**, deterministic
+  repair). #59 and #60 are still open **and both have a failed attempt on
+  record** — read this before trying again:
+  - **#59** (superlatives return the measure): the recommended rule naming the
+    superlative vocabulary took `ranking` from **87.5% to 62.5%**. The 3B model
+    copied the concrete example verbatim, including its `ASC` direction on a
+    "highest" question, breaking two cases that had been passing 3/3. An
+    abstract rewrite measured the same. Reverted.
+  - **#60** (units vs orders): the recommended rule *did* fix its own case —
+    `filter` 91% → 100% — but cost `ranking` 87.5% → 75%, for an identical
+    93/99 across the three categories either way. It moves failures rather than
+    removing them. Reverted.
+
+  **This is the third confirmation of the #52 lesson, and the sharpest**: a rule
+  that provably fixes its target case can still be not worth shipping. Compare
+  *category* totals across the whole eval, not the headline — 86.0–91.2 is the
+  observed range, wide enough to hide a 12-point category swing.
+- **Date handling is now the largest accuracy gap** (`date` 7/15) and has no
+  issue of its own. Two cases fail structurally: a year-range filter becomes an
+  equality test against a single date, and another projects an extra column the
+  reference does not. The latter may be reference strictness rather than model
+  error — worth checking before writing code.
+- ~~**Nothing watches for EOL runtimes (#47)**~~ — **fixed** 2026-08-06.
+  `eol-watch.yml` runs monthly against `endoflife.date` and opens/updates one
+  rolling issue. It parses the pins out of the real files rather than
+  re-declaring them, and a rule that stops matching **fails the job** instead of
+  reporting all-clear — a checker that has gone blind is worse than none.
+  Current: python 3.12 → 2028-10-31, node 24 → 2028-04-30, nginx stable (no
+  announced end).
 - **Prompting is not a control; a deterministic rewrite is.** The eval's first
   run found the model dropping the GROUP BY key from the projection
   (`SELECT SUM(total_amount) FROM sales_data GROUP BY region` — unlabelled
@@ -327,19 +376,32 @@ one item, one PR, merged before the next starts.
 4. ~~**NL2SQL accuracy eval** (#16)~~ — done 2026-08-02, and it immediately
    found a real bug (#52, fixed 2026-08-03). Accuracy 78.4% → **88.9%**.
 
+**Everything below P0 that could be done from a dev machine now has been.** What
+is left in P0 is blocked on infrastructure and accounts, not on effort — which
+means the top of this list has not moved since 2026-07-21 and will not until
+someone provisions something. That is the honest state of the project.
+
 **P1 — real bugs and abuse vectors.**
 
-5. **E2E cold-path flakiness** (#45). Currently green for the wrong reason.
-6. **Email verification / captcha on signup** (#21). Open signup hands every new
-   org free LLM quota; the rate limit and kill switch only slow single-IP abuse.
+5. ~~E2E cold-path flakiness (#45)~~ — done 2026-08-05 (PR #63).
+6. ~~Email verification on signup (#21)~~ — **half done** 2026-08-06. Queries are
+   gated; the mail transport is a no-op, so the remaining half is Track B.
 
 **P2 — quality, cheap.** Each is roughly an hour.
 
 7. ~~Raise the backend coverage gate 70 → 85 (#28)~~ — done 2026-08-02.
-8. Frontend coverage gate + the remaining 8 components (#27); `FileUpload` first.
-9. PDF export truncation (#46).
-10. EOL-runtime watch (#47).
-11. Billing feature gaps — proration, dunning, invoices (#31).
+8. ~~Frontend coverage gate (#27)~~ — done 2026-08-06, `FileUpload` covered.
+   **The remaining seven components are the next cheap win**, in value order:
+   `Login`, `AdminConsole`, `AuditLogs`, `AccountSettings`, `Dashboard`,
+   `Sidebar`, `ErrorBoundary`. Raise the thresholds as each lands.
+9. ~~PDF export truncation (#46)~~ — done 2026-08-03.
+10. ~~EOL-runtime watch (#47)~~ — done 2026-08-06.
+11. **Accuracy: #59 and #60 are still open, and both have a failed attempt on
+    record.** Read the note in "Known gaps" before touching either — the
+    recommended prompt fix for each was written, measured and reverted.
+    `date` (7/15) is now the largest gap and has no issue yet.
+12. Billing feature gaps — proration, dunning, invoices (#31). Explicitly
+    post-launch; **do not start before #19** proves the money path.
 
 ### Conventions worth keeping
 
