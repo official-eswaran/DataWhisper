@@ -19,7 +19,7 @@ from app.nl2sql.intent_classifier import (
 from app.nl2sql.llm_client import call_local_llm
 from app.nl2sql.prompt_builder import build_nl2sql_prompt
 from app.nl2sql.result_formatter import build_result, chat_result
-from app.nl2sql.sql_repair import add_missing_group_keys
+from app.nl2sql.sql_repair import add_distinct_for_value_listing, add_missing_group_keys
 from app.nl2sql.sql_validator import validate_and_fix_sql, validate_sql
 
 logger = logging.getLogger("datawhisper.pipeline")
@@ -116,6 +116,12 @@ class NL2SQLPipeline:
             }
         # After validation, before execution: the user is shown the SQL that ran.
         generated_sql = add_missing_group_keys(generated_sql, self.conn)
+        # Value-listing questions that came back without DISTINCT (#58). Needs
+        # the question, unlike the GROUP BY repair — the same SQL is correct or
+        # wrong depending on what was asked.
+        generated_sql = add_distinct_for_value_listing(
+            generated_sql, user_question, self.conn
+        )
 
         try:
             # A safe query that failed to bind carries bind_error, which routes it

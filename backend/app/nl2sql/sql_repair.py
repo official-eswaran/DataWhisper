@@ -34,12 +34,14 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 
 logger = logging.getLogger("datawhisper.sql_repair")
 
 _SELECT_NODE = "SELECT_NODE"
 _COLUMN_REF = "COLUMN_REF"
 _STAR = "STAR"
+_DISTINCT_MODIFIER = {"type": "DISTINCT_MODIFIER", "distinct_on_targets": []}
 
 
 def _column_key(node: dict) -> tuple[str, ...] | None:
@@ -146,4 +148,121 @@ def add_missing_group_keys(sql: str, conn) -> str:
         return sql
 
     logger.info("Repaired missing GROUP BY key(s) in generated SQL")
+    return repaired
+
+
+# ── DISTINCT for value-listing questions (issue #58) ──────────────────────────
+#
+# "List all the regions" produced `SELECT region FROM sales_data` — 25 rows, 21
+# of them duplicates, where 4 were wanted. Worse than a wrong number, because
+# every value shown is real and nothing signals the repetition; at upload scale
+# it is 100k rows of near-duplicates that a human would not notice.
+#
+# The prompt route was tried first and measured (see PROJECT_STATUS.md): a rule
+# telling the model to use DISTINCT for "list the X" fixed this case and broke
+# `sales_product_variety` ("how many different products" -> COUNT(DISTINCT p)),
+# leaving the category exactly where it started. The #52 finding again — on a 3B
+# model a rule is a suggestion, and it perturbs neighbours.
+#
+# This trigger is softer than #52's, which was pure AST: it has to read the
+# question, because `SELECT region FROM t` is *correct* for "show me every
+# order's region" and wrong only for "which regions exist". So the AST guard is
+# deliberately narrow and the question cues are explicit, and anything outside
+# both is left alone.
+
+# Asking which values exist. Kept to phrasings that are unambiguous about
+# wanting the set — "list/show the Xs", "what Xs are there", or an explicit
+# unique/distinct/different.
+_LISTING_CUES = (
+    re.compile(r"\b(?:list|show|display|give)\b(?:\s+me)?\s+(?:all\s+|of\s+)*\s*the\b"),
+    re.compile(r"\bwhat\s+\w+\s+are\s+there\b"),
+    re.compile(r"\b(?:unique|distinct|different)\b"),
+)
+
+# Cues that mean the question is *not* asking for a bare set of values.
+# `distribution`/`spread`/`histogram` matter most: those genuinely want every
+# raw value (prompt rule 9), and deduplicating them would destroy the answer.
+_NOT_LISTING_CUES = re.compile(
+    r"\b(?:how\s+many|how\s+much|count|total|sum|average|mean|median|"
+    r"distribution|spread|histogram|each|per)\b"
+)
+
+
+def _asks_for_distinct_values(question: str) -> bool:
+    q = question.casefold()
+    if _NOT_LISTING_CUES.search(q):
+        return False
+    return any(cue.search(q) for cue in _LISTING_CUES)
+
+
+def add_distinct_for_value_listing(sql: str, question: str, conn) -> str:
+    """Add DISTINCT when the question asked which values exist (issue #58).
+
+    Fires only on the exact shape that is wrong: a bare single-column projection
+    off one table, with no DISTINCT, no aggregate, no GROUP BY, no ORDER BY and
+    no LIMIT. Returns the input unchanged for anything else. Never raises.
+    """
+    if not _asks_for_distinct_values(question):
+        return sql
+
+    try:
+        serialized = conn.execute("SELECT json_serialize_sql(?::VARCHAR)", [sql]).fetchone()[0]
+        payload = json.loads(serialized)
+    except Exception as exc:  # noqa: BLE001 — repair is best-effort by design
+        logger.debug("distinct repair: could not parse SQL (%s)", exc)
+        return sql
+
+    if payload.get("error"):
+        return sql
+    statements = payload.get("statements") or []
+    if len(statements) != 1:
+        return sql
+    node = statements[0].get("node") or {}
+
+    if node.get("type") != _SELECT_NODE:
+        return sql
+    # DISTINCT, ORDER BY and LIMIT are all modifiers, so an empty list is one
+    # check for "not already deduplicated, not ranked, not truncated". A ranked
+    # or limited query is answering a different question and must not be touched.
+    if node.get("modifiers"):
+        return sql
+    if node.get("group_expressions") or node.get("having"):
+        return sql
+    if node.get("aggregate_handling") not in (None, "STANDARD_HANDLING"):
+        return sql
+    if node.get("qualify") or node.get("sample"):
+        return sql
+
+    # Exactly one plain column. Two columns may be a genuine pairing, and a
+    # FUNCTION is an aggregate — which is what keeps COUNT(DISTINCT x) (the case
+    # the prompt rule broke) out of reach here.
+    select_list = node.get("select_list") or []
+    if len(select_list) != 1 or _column_key(select_list[0]) is None:
+        return sql
+
+    # One base table. A join or subquery makes "the set of values" ambiguous
+    # enough not to guess at.
+    from_table = node.get("from_table") or {}
+    if from_table.get("type") != "BASE_TABLE":
+        return sql
+
+    node["modifiers"] = [dict(_DISTINCT_MODIFIER)]
+
+    try:
+        repaired = conn.execute(
+            "SELECT json_deserialize_sql(?::JSON)", [json.dumps(payload)]
+        ).fetchone()[0]
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("distinct repair: could not rebuild SQL (%s)", exc)
+        return sql
+
+    if not repaired or not isinstance(repaired, str):
+        return sql
+
+    from app.nl2sql.sql_validator import is_safe_sql
+
+    if not is_safe_sql(repaired):
+        return sql
+
+    logger.info("Added DISTINCT to a value-listing query")
     return repaired

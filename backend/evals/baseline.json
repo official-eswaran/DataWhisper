@@ -1,42 +1,43 @@
 {
-  "recorded_at": "2026-08-03T15:44:43+00:00",
+  "recorded_at": "2026-08-06T00:00:00+00:00",
   "model": "llama3.2:3b",
   "repeat": 3,
   "cache_enabled": false,
   "hardware": "dev laptop, CPU inference",
-  "accuracy": 88.9,
+  "accuracy": 87.1,
   "floor": 80.0,
-  "observed_range": "86.0 - 91.2 over three rounds",
+  "observed_range": "86.0 - 91.2 over three rounds (unchanged; see note)",
+  "note": "The headline number did not move and is not claimed to. `distinct` went 60% -> 100% on the DISTINCT repair (#58), a mechanical +6 attempts; `date`, `group_by` and `having` gave back 9 between them, and every case behind those losses is already listed under non_deterministic or was failing before. 87.1 sits inside the band the previous baseline recorded, so this is one sample of a noisy measurement — not a regression and not an improvement. Only the per-category distinct figure is a real change.",
   "previous": {
-    "accuracy": 78.4,
-    "floor": 70.0,
-    "recorded_at": "2026-08-02T17:44:17+00:00",
-    "note": "Before the GROUP BY key repair (#52). group_by was 30%."
+    "accuracy": 88.9,
+    "floor": 80.0,
+    "recorded_at": "2026-08-03T15:44:43+00:00",
+    "note": "After the GROUP BY key repair (#52), before the DISTINCT repair (#58)."
   },
   "by_category": {
     "aggregate": { "passed": 42, "total": 42 },
-    "date": { "passed": 11, "total": 15 },
-    "distinct": { "passed": 9, "total": 15 },
+    "date": { "passed": 7, "total": 15 },
+    "distinct": { "passed": 15, "total": 15 },
     "filter": { "passed": 30, "total": 33 },
-    "group_by": { "passed": 25, "total": 27 },
-    "having": { "passed": 2, "total": 3 },
+    "group_by": { "passed": 22, "total": 27 },
+    "having": { "passed": 0, "total": 3 },
     "intent": { "passed": 12, "total": 12 },
     "ranking": { "passed": 21, "total": 24 }
   },
   "known_failures": {
-    "note": "Five cases fail on every run, and they are four distinct defects — none is the GROUP BY bug, which #52 fixed. Each deserves its own issue and its own measurement.",
+    "note": "#58 is fixed deterministically and `distinct` is now 15/15. #59 and #60 remain open: prompt fixes for both were written, measured and reverted — see PROJECT_STATUS.md. What remains is dominated by date handling, which is now the largest single category loss and has no issue of its own yet.",
     "always_failing": {
-      "sales_distinct_regions": "DISTINCT omitted: 'List all the regions' -> SELECT region FROM sales_data",
-      "emp_distinct_cities": "DISTINCT omitted, same shape",
-      "sales_cheapest_product": "returns the measure, not the entity: SELECT MIN(price) instead of the product",
-      "sales_laptop_units": "aggregate omitted: SELECT quantity instead of SUM(quantity)",
-      "emp_joined_2021": "no valid SQL produced at all for a year-range filter"
+      "sales_cheapest_product": "#59 — returns the measure, not the entity: SELECT MIN(price) instead of the product",
+      "emp_joined_2021": "a year-range filter becomes an equality test against a single date (join_date = '2021-01-01')",
+      "emp_joined_before_2020": "projects an extra column the reference does not (emp_name, join_date vs emp_name)"
     },
     "non_deterministic": [
       "sales_electronics_by_region",
       "sales_march_revenue",
-      "sales_products_over_200k"
+      "sales_products_over_200k",
+      "emp_best_performer",
+      "sales_laptop_units"
     ]
   },
-  "floor_rationale": "80 sits 6 points below the lowest observed round (86.0), matching the ~7-point headroom the previous floor used. The floor detects a regression, not a target: it trips if a whole category collapses, but not on the model's ordinary run-to-run variance. Raise it when a real improvement lands and record what changed."
+  "floor_rationale": "80 sits 6 points below the lowest observed round (86.0) and is unchanged. The floor detects a regression, not a target: it trips if a whole category collapses, but not on this model's ordinary run-to-run variance — of which this round is a good illustration. Raise it only when a real improvement lands and the *category* figures, not the headline, show it."
 }
