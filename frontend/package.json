@@ -20,6 +20,7 @@
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^13.5.0",
     "@vitejs/plugin-react": "^4.3.4",
+    "@vitest/coverage-v8": "^3.2.7",
     "jsdom": "^25.0.1",
     "vite": "^6.4.3",
     "vitest": "^3.2.7"
@@ -29,7 +30,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "vitest run",
+    "test": "vitest run --coverage",
     "test:watch": "vitest",
     "test:e2e": "bash e2e/run.sh"
   },

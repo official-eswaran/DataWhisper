@@ -58,7 +58,11 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - name: Install dependencies
         run: npm ci
-      - name: Test
+      - name: Test (enforces the coverage thresholds in vite.config.js)
+        # `npm test` is `vitest run --coverage`, so the gate lives with the
+        # config rather than in this file and applies locally too. Until #27
+        # this job ran with no threshold at all and frontend coverage could
+        # regress to nothing without CI noticing.
         run: npm test
       - name: Build
         run: npm run build
