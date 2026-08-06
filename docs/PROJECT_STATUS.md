@@ -283,9 +283,9 @@ None are blocking, but they're the honest loose ends:
   `npm test` is `vitest run --coverage` with thresholds in `vite.config.js`
   (60 statements / 85 branches / 50 functions), enforced locally and in CI.
   Proven: deleting a suite leaves 78 green tests and exits 1.
-  **Seven components remain uncovered** — `Login`, `AdminConsole`, `AuditLogs`,
-  `AccountSettings`, `Dashboard`, `Sidebar`, `ErrorBoundary`. Raise the
-  thresholds as each lands. The coverage config needs its explicit `include`:
+  **Seven components remain uncovered** (**issue #70**) — `Login`,
+  `AdminConsole`, `AuditLogs`, `AccountSettings`, `Dashboard`, `Sidebar`,
+  `ErrorBoundary`. One per PR; raise the thresholds as each lands. The coverage config needs its explicit `include`:
   without it the v8 provider also measures `build/assets/*.js` and reports a
   number ~10 points below the truth.
 - ~~**The backend coverage gate is 70% while actual coverage is 90.4%**~~ —
@@ -314,11 +314,20 @@ None are blocking, but they're the honest loose ends:
   that provably fixes its target case can still be not worth shipping. Compare
   *category* totals across the whole eval, not the headline — 86.0–91.2 is the
   observed range, wide enough to hide a 12-point category swing.
-- **Date handling is now the largest accuracy gap** (`date` 7/15) and has no
-  issue of its own. Two cases fail structurally: a year-range filter becomes an
-  equality test against a single date, and another projects an extra column the
-  reference does not. The latter may be reference strictness rather than model
-  error — worth checking before writing code.
+- **Date handling is now the largest accuracy gap** (`date` 7/15) — **issue #69**.
+  All three failing cases are one defect: a period expression becomes a wrong
+  boundary rather than a range. "In March 2024" and "in 2021" collapse to an
+  equality against the first day of the period; "before 2020" becomes
+  `< '2020-12-31'`, which admits the whole of the year it is meant to exclude.
+  Each returns a plausible, silently wrong number.
+
+  An earlier version of this note guessed that one of the three might be eval
+  strictness over an extra projected column rather than a model error. **That is
+  wrong and was checked:** the case carries `subset_ok=True`, so `results_match`
+  permutes columns and matches on `emp_name` alone — the comparison fails on row
+  count, caused by the boundary. Don't re-derive that dead end. #61 (dates typed
+  `TIMESTAMP_NS`) is the other dead end: it is genuinely fixed, and this SQL
+  binds and runs. It just asks the wrong question.
 - ~~**Nothing watches for EOL runtimes (#47)**~~ — **fixed** 2026-08-06.
   `eol-watch.yml` runs monthly against `endoflife.date` and opens/updates one
   rolling issue. It parses the pins out of the real files rather than
@@ -391,15 +400,16 @@ someone provisions something. That is the honest state of the project.
 
 7. ~~Raise the backend coverage gate 70 → 85 (#28)~~ — done 2026-08-02.
 8. ~~Frontend coverage gate (#27)~~ — done 2026-08-06, `FileUpload` covered.
-   **The remaining seven components are the next cheap win**, in value order:
-   `Login`, `AdminConsole`, `AuditLogs`, `AccountSettings`, `Dashboard`,
-   `Sidebar`, `ErrorBoundary`. Raise the thresholds as each lands.
+   **The remaining seven components (#70) are the next cheap win**, in value
+   order: `Login`, `AdminConsole`, `AuditLogs`, `AccountSettings`, `Dashboard`,
+   `Sidebar`, `ErrorBoundary`. One per PR; raise the thresholds as each lands.
 9. ~~PDF export truncation (#46)~~ — done 2026-08-03.
 10. ~~EOL-runtime watch (#47)~~ — done 2026-08-06.
-11. **Accuracy: #59 and #60 are still open, and both have a failed attempt on
-    record.** Read the note in "Known gaps" before touching either — the
-    recommended prompt fix for each was written, measured and reverted.
-    `date` (7/15) is now the largest gap and has no issue yet.
+11. **Accuracy: #69 (dates) first, then #59 and #60.** `date` at 7/15 is the
+    largest category gap and #69 is one coherent defect with a derivable fix.
+    #59 and #60 both have a **failed attempt on record** — read the note in
+    "Known gaps" before touching either; the prompt fix each issue recommends is
+    the one that was tried and reverted.
 12. Billing feature gaps — proration, dunning, invoices (#31). Explicitly
     post-launch; **do not start before #19** proves the money path.
 
