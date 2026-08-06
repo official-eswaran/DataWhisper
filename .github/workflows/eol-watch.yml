@@ -1,0 +1,87 @@
+# End-of-life runtime watch (issue #47).
+#
+# Dependabot cannot do this job. It ignores `docker` majors on purpose (#42) —
+# a base-image major swaps the language runtime under the whole app, and a green
+# `docker build` does not run the test suite inside the new image — and it
+# structurally cannot see `node-version:` in ci.yml/e2e.yml at all, because the
+# `github-actions` ecosystem bumps `actions/setup-node` itself, never the
+# version that action installs.
+#
+# Node 20 sat three months past EOL in three places before anyone noticed. This
+# is the thing that would have said so.
+#
+# The check itself lives in scripts/check_eol.py and is unit-tested in
+# backend/tests/test_eol_watch.py, including against a deliberately stale pin —
+# a watchdog nobody has seen bark is not known to work.
+name: eol-watch
+
+on:
+  schedule:
+    # Monthly. The warning window is 180 days, so a monthly cadence still leaves
+    # ~6 notices before anything actually expires.
+    - cron: "0 6 1 * *"
+  workflow_dispatch:
+    inputs:
+      threshold_days:
+        description: "Warn this many days before EOL (default 180)"
+        required: false
+        default: "180"
+      today:
+        description: "Pretend today is this date (YYYY-MM-DD) — rehearse a future warning"
+        required: false
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check:
+    name: Check pinned runtimes
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      # No setup-python step on purpose: this script is stdlib-only, and pinning
+      # a Python version *inside the EOL checker* is the joke that writes itself.
+      - name: Check pinned runtimes against endoflife.date
+        id: check
+        run: |
+          set +e
+          python3 scripts/check_eol.py \
+            --threshold-days "${{ inputs.threshold_days || 180 }}" \
+            ${{ inputs.today && format('--today {0}', inputs.today) || '' }} \
+            > report.md
+          echo "status=$?" >> "$GITHUB_OUTPUT"
+          cat report.md
+
+      # Exit 2 means the script could not answer — a pin stopped matching, or
+      # the API was unreachable. That is a failure, not an all-clear: silently
+      # passing when the checker has gone blind is the exact failure mode #47
+      # is about.
+      - name: Fail if the check could not run
+        if: steps.check.outputs.status == '2'
+        run: |
+          echo "::error::check_eol.py could not complete — see the log above."
+          exit 1
+
+      - name: Open or update the tracking issue
+        if: steps.check.outputs.status == '1'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TITLE: "P2: Pinned runtime approaching end of life"
+        run: |
+          BODY="$(cat report.md)"
+          # One rolling issue rather than a new one every month — the report is
+          # a current-state snapshot, so a fresh copy each run would just be
+          # noise on top of an unresolved one.
+          EXISTING="$(gh issue list --state open --search "$TITLE in:title" \
+            --json number,title \
+            --jq "[.[] | select(.title == \"$TITLE\")] | .[0].number // empty")"
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --body "$BODY"
+            echo "Commented on existing issue #$EXISTING"
+          else
+            gh issue create --title "$TITLE" --body "$BODY" --label P2
+            echo "Opened a new issue"
+          fi
