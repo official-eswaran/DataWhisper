@@ -71,10 +71,10 @@ existed. For a 3B model, prompt text is a suggestion; a rewrite is a guarantee.
 
 ### 2. `#45` — E2E passes only on retry (P1)
 
-- [ ] **Merged** — PR open on `kiran` (2026-08-04). `run.sh` now warms the model
-  into RAM before Playwright runs, so the timed query no longer pays model load;
-  `retries` dropped to `0` so a cold-path regression goes red instead of being
-  masked; redundant `ollama serve &` removed from `e2e.yml`. Tick when merged.
+- [x] **Merged** — 2026-08-05, PR #63. `run.sh` warms the model into RAM before
+  Playwright runs, so the timed query no longer pays model load; `retries`
+  dropped to `0` so a cold-path regression goes red instead of being masked;
+  redundant `ollama serve &` removed from `e2e.yml`.
 
 Attempt 1 blows the 120s `expect` timeout on cold CPU inference, warms the LLM
 cache, and the retry passes in 3.1s. `retries: 1` is what makes it green, so the
@@ -100,7 +100,11 @@ blocking `#25`.
 
 ### 3. `#21` — Signup abuse vector (P1)
 
-- [ ] **Merged**
+- [x] **Merged** — 2026-08-06. Queries now require a verified address; the gate
+  is per-org keyed on the owner (a per-user check let an unverified owner create
+  a member through the admin route and query as them). Off under DEBUG, existing
+  accounts grandfathered by the migration. The mail transport is an interface
+  with a no-op default — **the SMTP/captcha half is still deferred to Track B.**
 
 Each new org gets 1,000 free LLM queries + 10M rows, quotas are per-org, so the
 bypass is "make another org". `RATE_LIMIT_REGISTER` (5/hour/IP) and
@@ -121,7 +125,7 @@ unaffected, and the deferred half is written down here rather than forgotten.
 
 ### 4. `#28` — Backend coverage gate 70 → 85 (P2)
 
-- [ ] **Merged**
+- [x] **Merged** — 2026-08-02, PR #49. Coverage is 91.15% against the 85 gate.
 
 Actual coverage is 90.4%, the gate is 70. Twenty points of real coverage are
 unprotected — a regression could delete a third of the suite and CI stays green.
@@ -136,7 +140,10 @@ file's 90.4% is a snapshot.
 
 ### 5. `#27` — Frontend coverage gate + remaining components (P2)
 
-- [ ] **Merged**
+- [x] **Merged** — 2026-08-06. `npm test` is now `vitest run --coverage` with
+  thresholds in `vite.config.js`, so the gate applies locally and in CI.
+  `FileUpload` covered (16 tests, 94 total). **The remaining seven components
+  are still uncovered** — follow-up PRs, in the value order below.
 
 4 of 12 components tested (`ResultView`, `ChatWindow`, `Signup`, `BillingCard`),
 and `npm test` runs with no threshold at all, so coverage can regress silently.
@@ -161,7 +168,10 @@ seven components can be follow-up PRs — split them rather than growing one PR.
 
 ### 7. `#47` — EOL runtime watch (P2)
 
-- [ ] **Merged**
+- [x] **Merged** — 2026-08-06. `scripts/check_eol.py` + monthly `eol-watch.yml`.
+  Parses the pins out of the real files (a re-declared list goes stale silently)
+  and fails the job rather than reporting all-clear if a pin stops matching.
+  Proven to fire against stale pins in `tests/test_eol_watch.py`.
 
 Dependabot ignores docker majors by design and structurally cannot see the
 `node-version` inputs in `ci.yml` / `e2e.yml`. Node 20 sat three months past EOL
@@ -180,17 +190,56 @@ against a deliberately stale pin before trusting it.
 
 ### 7a. Accuracy defects found by the eval (#58, #59, #60, #61)
 
-- [ ] **Merged**
+- [x] **#61** — merged 2026-08-04 (`4c68e7c`)
+- [x] **#58** — merged 2026-08-06: `distinct` 60% → **100%**
+- [ ] **#59** — attempted, measured, **reverted**. Still open.
+- [ ] **#60** — attempted, measured, **reverted**. Still open.
 
-The five cases still failing every run after #52. Four distinct defects, filed
-individually with the failing SQL and a verification command each:
+| issue | defect | severity | state |
+|---|---|---|---|
+| #61 | Dates are `TIMESTAMP_NS`, model emits `LIKE '2021%'` — **and the self-heal never runs for bind errors** | P1 | fixed |
+| #60 | "How many laptops sold" counts orders (3) instead of summing units (11) | P2 | **open** |
+| #59 | "Which product is cheapest" returns the price, not the product | P2 | **open** |
+| #58 | "List all the regions" omits `DISTINCT` — 25 rows instead of 4 | P2 | fixed |
 
-| issue | defect | severity |
+**#58 — what worked.** The prompt route was tried first, being cheapest, and
+rejected on measurement: a "use DISTINCT for list-the-X" rule fixed
+`sales_distinct_regions` and broke `sales_product_variety`
+(`COUNT(DISTINCT product)`), leaving the category at 60% exactly where it
+started. The fix that shipped is deterministic
+(`sql_repair.add_distinct_for_value_listing`), and unlike #52's it must read
+the question — `SELECT region FROM t` is *correct* for "show every order's
+region" and wrong only for "which regions exist". The AST guard is
+correspondingly narrow: one plain column, one base table, no modifiers at all
+(which excludes already-DISTINCT, `ORDER BY` and `LIMIT` in a single check).
+
+**#59 and #60 — what didn't, and why it's written down.** Both issues
+recommended a prompt rule. Both were written as recommended, measured with
+`--repeat 3`, and reverted:
+
+| attempt | target category | collateral |
 |---|---|---|
-| #61 | Dates are `TIMESTAMP_NS`, model emits `LIKE '2021%'` — **and the self-heal never runs for bind errors** | P1 |
-| #60 | "How many laptops sold" counts orders (3) instead of summing units (11) | P2 |
-| #59 | "Which product is cheapest" returns the price, not the product | P2 |
-| #58 | "List all the regions" omits `DISTINCT` — 25 rows instead of 4 | P2 |
+| #59, rule 10a naming the superlative vocabulary | `sales_cheapest_product` still failed | `ranking` **87.5% → 62.5%** |
+| #60, rule 8a distinguishing units from records | `filter` 91% → 100% ✅ | `ranking` **87.5% → 75%** |
+
+For #59 the 3B model copied the concrete example verbatim — including its `ASC`
+direction on a "highest" question — and projected the example's second column,
+breaking `sales_most_expensive_product` and `emp_top5_salary`, both of which had
+been passing 3/3. Rewriting the rule abstractly (no copyable query, explicit
+DESC/ASC mapping, "project ONLY the entity") still measured 62.5%.
+
+For #60 the rule genuinely fixed its target — but the three categories together
+scored 93/99 with it and 93/99 without. It moves failures rather than removing
+them.
+
+**This is the third independent confirmation of the #52 lesson**, and the first
+where a rule that provably fixed its own case was still not worth shipping.
+Anyone picking these up: run the *whole* eval, and compare category totals
+rather than the headline, which is noisy enough (86.0–91.2 observed) to hide a
+12-point category swing.
+
+**Do not** re-attempt either of these with another prompt edit without reading
+the two rows above first.
 
 **#61 is the one to read first.** Half of it is not an accuracy bug at all: the
 self-heal path in `pipeline.py` is unreachable for the failure it was written to
