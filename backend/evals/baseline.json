@@ -1,43 +1,42 @@
 {
-  "recorded_at": "2026-08-06T04:00:00+00:00",
+  "recorded_at": "2026-08-07T00:00:00+00:00",
   "model": "llama3.2:3b",
   "repeat": 3,
   "cache_enabled": false,
   "hardware": "dev laptop, CPU inference",
-  "accuracy": 90.6,
+  "accuracy": 94.7,
   "floor": 80.0,
-  "observed_range": "86.0 - 91.2 over three rounds (pre-#69; not re-measured)",
-  "note": "The date period repair (#69). Unlike the previous round this is a real improvement and the category table shows why: `date` 7/15 -> 13/15, and every other category is byte-identical to the run before it. The +6 overall is exactly the date gain, with no collateral — which is what the #52/#59/#60 prompt attempts could never achieve.",
+  "observed_range": "86.0 - 94.7 across all rounds recorded to date",
+  "note": "The missing-GROUP-BY repair (#73). Read the attribution before quoting the headline: of the +7 attempts, +5 are the repair (group_by 22/27 -> 27/27) and +2 are the two known-flaky date cases both landing well this round. The repair cannot touch the date category, so the attributable gain is +5 attempts = +2.9 points. A round where those two date cases fall the other way would read ~92.4% with this same code.",
   "previous": {
-    "accuracy": 87.1,
+    "accuracy": 90.6,
     "floor": 80.0,
-    "recorded_at": "2026-08-06T00:00:00+00:00",
-    "note": "After the DISTINCT repair (#58), before the date repair (#69). `date` was 7/15."
+    "recorded_at": "2026-08-06T04:00:00+00:00",
+    "note": "After the date period repair (#69). group_by was 22/27."
   },
   "by_category": {
     "aggregate": { "passed": 42, "total": 42 },
-    "date": { "passed": 13, "total": 15 },
+    "date": { "passed": 15, "total": 15 },
     "distinct": { "passed": 15, "total": 15 },
     "filter": { "passed": 30, "total": 33 },
-    "group_by": { "passed": 22, "total": 27 },
+    "group_by": { "passed": 27, "total": 27 },
     "having": { "passed": 0, "total": 3 },
     "intent": { "passed": 12, "total": 12 },
     "ranking": { "passed": 21, "total": 24 }
   },
   "known_failures": {
-    "note": "Nothing in the date category fails on every run any more. #58 and #69 are fixed deterministically; #59 and #60 remain open with a failed prompt attempt each on record (see PROJECT_STATUS.md). `group_by` and `having` are now the weakest categories, and both are dominated by cases already known to be non-deterministic rather than by a named defect.",
+    "note": "Exactly three cases fail, each 0/3, and each has a named issue. Five categories are now at 100%. Every remaining failure is a semantic choice the SQL cannot reveal — which is why all three resisted the deterministic approach that fixed #52, #58, #69 and #73.",
     "always_failing": {
-      "sales_cheapest_product": "#59 — returns the measure, not the entity: SELECT MIN(price) instead of the product"
+      "sales_cheapest_product": "#59 — returns the measure, not the entity: SELECT MIN(price) instead of the product. A repair would have to guess which column is the entity; the AST does not carry it.",
+      "sales_laptop_units": "#60 — COUNT(CASE WHEN ...) counts orders (3) where SUM(quantity) was meant (11). Both readings of 'how many' are legitimate; only the schema breaks the tie.",
+      "sales_products_over_200k": "#74 — a per-group threshold ('products generating more than 200000 in revenue') becomes a row-level WHERE instead of GROUP BY + HAVING SUM(...)."
     },
     "non_deterministic": [
       "emp_joined_2021",
       "sales_march_revenue",
-      "sales_electronics_by_region",
-      "sales_products_over_200k",
-      "emp_best_performer",
-      "sales_laptop_units"
+      "sales_electronics_by_region"
     ],
-    "date_residue": "emp_joined_2021 and sales_march_revenue each pass 2/3 rather than 0-1/3. Neither remaining failure is the #69 defect: one emits two comparisons with an invented upper bound (> '2020-12-31' AND <= '2021-03-15'), the other emits LIKE '%03-2024%', which is not a comparison at all. The repair correctly declines both. Fixing these means getting the model to stop inventing shapes, not widening a bound."
+    "flaky_note": "emp_joined_2021 and sales_march_revenue passed 3/3 this round but were 2/3 last round; neither is the #69 defect (one invents an upper bound, one emits LIKE '%03-2024%'). Treat date as ~13-15/15, not a solid 15."
   },
-  "floor_rationale": "Still 80, deliberately, despite 90.6. There is exactly ONE full round since #69, and raising a CI floor on a single sample of a measurement whose own recorded spread is ~5 points is how a gate starts flapping. `eval.yml` runs weekly — revisit once three or more post-#69 rounds exist, then set it ~6 points under the lowest. The floor's job is catching a category collapse, which 80 still does."
+  "floor_rationale": "Still 80, and still deliberately. Two rounds now sit at 90.6 and 94.7, but the spread between them is almost entirely two flaky date cases — which is exactly the argument against moving a CI gate on a small number of samples. `eval.yml` runs weekly; once three or more rounds exist on this code, set the floor ~6 points under the lowest observed. The floor's job is catching a category collapse, which 80 still does."
 }

@@ -485,3 +485,206 @@ def repair_date_period_bounds(sql: str, question: str, conn) -> str:
 
     logger.info("Widened a date comparison to the period the question named")
     return repaired
+
+
+# ── Missing GROUP BY entirely (issue #73) ─────────────────────────────────────
+#
+# The natural extension of #52. That repair fixes "GROUP BY present, key missing
+# from the projection". This one fixes the case where the model dropped the
+# grouping altogether and answered a per-group question with one scalar:
+#
+#   "What is the total revenue for each category?"
+#     -> SELECT SUM(total_amount) AS total_revenue FROM sales_data
+#   "What is the total Electronics revenue in each region?"
+#     -> SELECT SUM(CASE WHEN category = 'Electronics' THEN total_amount ELSE 0 END)
+#        FROM sales_data
+#
+# Both return a single number where the user asked for one per group, and both
+# fail every run. `add_missing_group_keys` cannot help: it keys off an existing
+# GROUP BY, and there isn't one.
+#
+# Like #69 and unlike #59, the answer is *derived*: the question names the
+# dimension ("each category"), and the name is then checked against the table's
+# real columns before anything is rewritten. Nothing is guessed.
+#
+# Note it does not unwrap the CASE WHEN pivot in the second example — grouping
+# it is already the fix for the reported defect, and unwrapping is a separate,
+# riskier transform. The pivot keeps groups with a zero total that the reference
+# query omits, so on data where some group has no matching rows the two still
+# differ. Worth knowing before relying on this for more than the grouping.
+
+# Aggregates whose presence means "this projection collapses rows".
+_AGGREGATE_NAMES = frozenset(
+    "sum count avg mean min max median mode total "
+    "stddev stddev_samp stddev_pop var_samp var_pop variance "
+    "count_star string_agg list arg_min arg_max quantile quantile_cont".split()
+)
+
+# "for each category", "in each region", "per region", "by category".
+_DIMENSION_CUES = (
+    re.compile(r"\beach\s+(?P<dim>[a-z_]+)\b"),
+    re.compile(r"\bper\s+(?P<dim>[a-z_]+)\b"),
+    # "by X" is the canonical phrasing but also appears in "sorted by", "ranked
+    # by", "ordered by" — none of which ask for a grouping.
+    re.compile(r"(?<!sorted )(?<!ordered )(?<!ranked )(?<!grouped )\bby\s+(?P<dim>[a-z_]+)\b"),
+)
+
+
+def _is_aggregate(node: dict) -> bool:
+    return (
+        node.get("class") == "FUNCTION"
+        and str(node.get("function_name", "")).casefold() in _AGGREGATE_NAMES
+    )
+
+
+def _table_columns(conn, table: str) -> list[str]:
+    try:
+        rows = conn.execute(
+            "SELECT column_name FROM information_schema.columns WHERE table_name = ?",
+            [table],
+        ).fetchall()
+    except Exception:  # noqa: BLE001 — repair is best-effort by design
+        return []
+    return [r[0] for r in rows]
+
+
+def _match_dimension(question: str, columns: list[str]) -> str | None:
+    """The column the question names as its grouping dimension, if exactly one.
+
+    Matching is against real columns, so a stray "each" in a question that names
+    nothing groupable cannot produce a rewrite.
+    """
+    by_folded = {c.casefold(): c for c in columns}
+    q = question.casefold()
+
+    found: set[str] = set()
+    for cue in _DIMENSION_CUES:
+        for m in cue.finditer(q):
+            for candidate in _singular_plural_forms(m.group("dim")):
+                if candidate in by_folded:
+                    found.add(by_folded[candidate])
+                    break
+    return found.pop() if len(found) == 1 else None
+
+
+def _singular_plural_forms(word: str) -> tuple[str, ...]:
+    """The word plus the obvious singular/plural variants of it.
+
+    Enough to bridge "each categories" to a ``category`` column and "by regions"
+    to ``region``. Not a stemmer: anything it fails to resolve simply means no
+    column matches and no rewrite happens, which is the safe direction.
+
+    Note ``str.rstrip('s')`` is wrong here — it strips *every* trailing s, so
+    "class" becomes "clas".
+    """
+    forms = [word]
+    if word.endswith("ies"):
+        forms.append(word[:-3] + "y")          # categories -> category
+    elif word.endswith("es"):
+        forms.append(word[:-2])                # boxes -> box
+        forms.append(word[:-1])                # prices -> price
+    elif word.endswith("s") and not word.endswith("ss"):
+        forms.append(word[:-1])                # regions -> region
+    elif not word.endswith("s"):
+        forms.append(word + "s")               # region -> regions
+    # A word ending in "ss" ("class") is not a plural and yields no variant.
+    return tuple(forms)
+
+
+def add_missing_group_by(sql: str, question: str, conn) -> str:
+    """Add the GROUP BY a per-group question asked for but the SQL omitted.
+
+    Fires only when the question names exactly one real column as its dimension,
+    the query aggregates, has no GROUP BY at all, no modifiers, and reads from a
+    single base table. Returns the input unchanged otherwise. Never raises.
+    """
+    try:
+        serialized = conn.execute("SELECT json_serialize_sql(?::VARCHAR)", [sql]).fetchone()[0]
+        payload = json.loads(serialized)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("group-by repair: could not parse SQL (%s)", exc)
+        return sql
+
+    if payload.get("error"):
+        return sql
+    statements = payload.get("statements") or []
+    if len(statements) != 1:
+        return sql
+    node = statements[0].get("node") or {}
+
+    if node.get("type") != _SELECT_NODE:
+        return sql
+    # Only the "no grouping at all" case — #52's repair owns the rest.
+    if node.get("group_expressions"):
+        return sql
+    if node.get("aggregate_handling") not in (None, "STANDARD_HANDLING"):
+        return sql
+    # ORDER BY/LIMIT over an ungrouped aggregate means something quite different
+    # once grouped; don't reinterpret it.
+    if node.get("modifiers") or node.get("qualify") or node.get("sample"):
+        return sql
+
+    from_table = node.get("from_table") or {}
+    if from_table.get("type") != "BASE_TABLE":
+        return sql
+    table = from_table.get("table_name")
+    if not table:
+        return sql
+
+    select_list = node.get("select_list") or []
+    if not select_list or _projects_everything(select_list):
+        return sql
+    # Must actually aggregate. Without this, "the region for each order" — a
+    # plain projection — would get a spurious GROUP BY.
+    if not any(_is_aggregate(item) for item in select_list):
+        return sql
+
+    dimension = _match_dimension(question, _table_columns(conn, table))
+    if dimension is None:
+        return sql
+
+    # No "is it already projected?" check here, deliberately. For that to
+    # matter the query would need an aggregate, no GROUP BY, and the dimension
+    # projected as a bare column — which DuckDB rejects outright ("column must
+    # appear in the GROUP BY clause"), so it cannot reach this function. A
+    # mutation removing such a guard killed no test, which is how it was found.
+
+    column_ref = {
+        "class": _COLUMN_REF,
+        "type": _COLUMN_REF,
+        "alias": "",
+        "query_location": 0,
+        "column_names": [dimension],
+    }
+    node["group_expressions"] = [json.loads(json.dumps(column_ref))]
+    node["group_sets"] = [[0]]
+    # Dimension first, then the measures — the order a reader expects and the
+    # one the reference answers use, matching #52's repair.
+    node["select_list"] = [json.loads(json.dumps(column_ref))] + select_list
+
+    try:
+        repaired = conn.execute(
+            "SELECT json_deserialize_sql(?::JSON)", [json.dumps(payload)]
+        ).fetchone()[0]
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("group-by repair: could not rebuild SQL (%s)", exc)
+        return sql
+
+    if not repaired or not isinstance(repaired, str):
+        return sql
+
+    # It has to actually run — a grouped rewrite can fail to bind in ways the
+    # ungrouped original did not.
+    try:
+        conn.execute(f"EXPLAIN {repaired}")
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("group-by repair: rewrite does not bind (%s)", exc)
+        return sql
+
+    from app.nl2sql.sql_validator import is_safe_sql
+
+    if not is_safe_sql(repaired):
+        return sql
+
+    logger.info("Added the GROUP BY a per-group question asked for")
+    return repaired

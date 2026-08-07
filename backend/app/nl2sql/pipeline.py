@@ -21,6 +21,7 @@ from app.nl2sql.prompt_builder import build_nl2sql_prompt
 from app.nl2sql.result_formatter import build_result, chat_result
 from app.nl2sql.sql_repair import (
     add_distinct_for_value_listing,
+    add_missing_group_by,
     add_missing_group_keys,
     repair_date_period_bounds,
 )
@@ -128,6 +129,12 @@ class NL2SQLPipeline:
         )
         # A period in the question that became a single date (#69).
         generated_sql = repair_date_period_bounds(
+            generated_sql, user_question, self.conn
+        )
+        # A per-group question answered with a single scalar (#73). Adds the
+        # key to the projection itself, so order against #52's repair is
+        # immaterial — it never leaves a GROUP BY for that one to find.
+        generated_sql = add_missing_group_by(
             generated_sql, user_question, self.conn
         )
 
