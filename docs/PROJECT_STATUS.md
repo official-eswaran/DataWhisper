@@ -67,6 +67,7 @@ finished.
 | #27 | **Frontend coverage gate.** `npm test` is now `vitest run --coverage`; `FileUpload` covered. |
 | #58 | **DISTINCT repair.** `distinct` 60% → **100%**, deterministic. |
 | #69 | **Date period repair.** `date` 7/15 → **13/15**; overall 87.1% → **90.6%** with no other category moving. |
+| #73 | **Missing-GROUP-BY repair.** `group_by` 22/27 → **27/27**; overall **94.7%**. Five categories now at 100%. |
 | #59, #60 | **Attempted, measured, reverted — still open.** See the note below. |
 
 ### Shipped 2026-07-28 (audit session)
@@ -227,7 +228,7 @@ Things that are easy to miss when reading the code cold:
   needs Ollama running. Vitest is configured to ignore `e2e/**`; the two runners
   don't overlap. CI job is `.github/workflows/e2e.yml` (manual/nightly, not
   per-PR — it pulls a model). See `frontend/e2e/README.md`.
-- **Accuracy is measured (90.6%), and it is not 100%.** `backend/evals/` runs 57
+- **Accuracy is measured (94.7%), and it is not 100%.** `backend/evals/` runs 57
   question→answer cases through the real pipeline and compares *results* against
   a reference query (execution accuracy), because many different SQL strings are
   equally correct. `python -m evals` from `backend/`; needs Ollama. The floor
@@ -315,19 +316,24 @@ None are blocking, but they're the honest loose ends:
   that provably fixes its target case can still be not worth shipping. Compare
   *category* totals across the whole eval, not the headline — 86.0–91.2 is the
   observed range, wide enough to hide a 12-point category swing.
-- ~~**Date handling is the largest accuracy gap (#69)**~~ — **fixed** 2026-08-06.
-  `date` **7/15 → 13/15**, overall **87.1% → 90.6%**, and the +6 is *exactly*
-  the date gain: every other category is identical to the run before it. A third
-  deterministic repair (`sql_repair.repair_date_period_bounds`), and the reason
-  it worked where the #59/#60 prompt attempts didn't is that the answer is
-  *derived* rather than guessed — "March 2024" can only mean
-  `[2024-03-01, 2024-04-01)`.
+- ~~**Date handling is the largest accuracy gap (#69)**~~ and ~~**per-group
+  questions answered with one scalar (#73)**~~ — both **fixed**. `date` 7/15 →
+  13-15/15, `group_by` 22/27 → **27/27**. Overall **94.7%**, five categories at
+  100%.
 
-  Two date cases still fail ~1 run in 3, and **neither is this defect**: one
-  emits two comparisons with an invented upper bound, the other emits
-  `LIKE '%03-2024%'`, which is not a comparison at all. The repair correctly
-  declines both. That is the model inventing shapes, not a bound being widened
-  wrongly — don't reopen #69 for it.
+  **Read the attribution, not the headline.** Of the +7 attempts in the #73
+  round, +5 are the repair and +2 are two flaky `date` cases landing well; that
+  repair cannot touch `date`. A round where they fall the other way reads ~92.4%
+  on identical code. This is why `baseline.json` records category tables.
+
+- **Three cases now fail, each 0/3, each with an issue — and all three are the
+  same *kind* of problem.** #59 (superlative returns the measure), #60 (units vs
+  orders), #74 (aggregate threshold becomes a row filter). Every one turns on a
+  semantic choice the SQL cannot reveal: which column is the entity, which
+  reading of "how many", which aggregate the threshold means. That is precisely
+  why they resisted the deterministic approach that fixed #52, #58, #69 and #73,
+  where the answer was always *derivable*. Expect these to be genuinely harder,
+  and do not read "four repairs worked" as "a fifth will".
 - ~~**Nothing watches for EOL runtimes (#47)**~~ — **fixed** 2026-08-06.
   `eol-watch.yml` runs monthly against `endoflife.date` and opens/updates one
   rolling issue. It parses the pins out of the real files rather than

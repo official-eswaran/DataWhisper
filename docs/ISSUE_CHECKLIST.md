@@ -279,6 +279,33 @@ validated on the full eval — see 7a for what happens otherwise.
 `sales_q1_orders` and `sales_h2_orders` pass 3/3 and phrase their range
 explicitly; they are what a clumsy fix breaks.
 
+### 7d. `#73` — Per-group questions answered with a single scalar (P2)
+
+- [x] **Merged** — 2026-08-07. `group_by` 22/27 → **27/27**. The adjacent defect
+  to #52: there the GROUP BY existed and the key was missing from the
+  projection; here there was no GROUP BY at all, so `add_missing_group_keys`
+  had nothing to key off. Fourth deterministic repair.
+
+  Attribution matters — the round measured 94.7% overall (+7 attempts), but only
+  **+5 are this repair**; the other +2 are two flaky `date` cases landing well,
+  which it cannot influence.
+
+### 7e. `#74` — Aggregate thresholds become row-level filters (P2)
+
+- [ ] **Merged**
+
+`having` is **0/3, the only category at zero**, and it is one case failing every
+run: "products generating more than 200000 in revenue" becomes a `WHERE` on
+individual orders instead of `GROUP BY product HAVING SUM(...)`. Wrong in both
+directions — reports a product with one large order, misses one with many small.
+
+**Harder than #69/#73, and worth knowing why before starting.** Two of the three
+things it must infer are derivable (the grouping key is the projected column;
+the phrasing signals an aggregate threshold) but the *third* — which aggregate —
+is a guess. "Generated more than X in revenue" implies SUM; "averaged more than
+X" implies AVG. A repair restricted to explicit total/sum vocabulary is
+defensible; a general one is guessing. That makes it closer to #59 than to #73.
+
 ### 7c. `#70` — Seven frontend components still untested (P2)
 
 - [ ] **Merged**
