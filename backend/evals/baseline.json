@@ -1,42 +1,65 @@
 {
-  "recorded_at": "2026-08-07T00:00:00+00:00",
-  "model": "llama3.2:3b",
-  "repeat": 3,
-  "cache_enabled": false,
-  "hardware": "dev laptop, CPU inference",
+ "recorded_at": "2026-08-08T00:00:00+00:00",
+ "model": "llama3.2:3b",
+ "repeat": 3,
+ "cache_enabled": false,
+ "hardware": "dev laptop, CPU inference",
+ "accuracy": 96.5,
+ "floor": 80.0,
+ "observed_range": "86.0 - 96.5 across all rounds recorded to date",
+ "note": "The aggregate-threshold repair (#74). The cleanest attribution of any round so far: +3 attempts, all three of them the `having` category going 0/3 -> 3/3, and every other category identical to the previous round attempt-for-attempt. Unlike the #73 round there is no flaky-case contribution to subtract, so the full +1.8 points is the repair. Six categories now at 100%; the two remaining failures are #59 and #60, each 0/3.",
+ "previous": {
   "accuracy": 94.7,
   "floor": 80.0,
-  "observed_range": "86.0 - 94.7 across all rounds recorded to date",
-  "note": "The missing-GROUP-BY repair (#73). Read the attribution before quoting the headline: of the +7 attempts, +5 are the repair (group_by 22/27 -> 27/27) and +2 are the two known-flaky date cases both landing well this round. The repair cannot touch the date category, so the attributable gain is +5 attempts = +2.9 points. A round where those two date cases fall the other way would read ~92.4% with this same code.",
-  "previous": {
-    "accuracy": 90.6,
-    "floor": 80.0,
-    "recorded_at": "2026-08-06T04:00:00+00:00",
-    "note": "After the date period repair (#69). group_by was 22/27."
+  "recorded_at": "2026-08-07T00:00:00+00:00",
+  "note": "After the missing-GROUP-BY repair (#73). having was 0/3."
+ },
+ "by_category": {
+  "aggregate": {
+   "passed": 42,
+   "total": 42
   },
-  "by_category": {
-    "aggregate": { "passed": 42, "total": 42 },
-    "date": { "passed": 15, "total": 15 },
-    "distinct": { "passed": 15, "total": 15 },
-    "filter": { "passed": 30, "total": 33 },
-    "group_by": { "passed": 27, "total": 27 },
-    "having": { "passed": 0, "total": 3 },
-    "intent": { "passed": 12, "total": 12 },
-    "ranking": { "passed": 21, "total": 24 }
+  "date": {
+   "passed": 15,
+   "total": 15
   },
-  "known_failures": {
-    "note": "Exactly three cases fail, each 0/3, and each has a named issue. Five categories are now at 100%. Every remaining failure is a semantic choice the SQL cannot reveal — which is why all three resisted the deterministic approach that fixed #52, #58, #69 and #73.",
-    "always_failing": {
-      "sales_cheapest_product": "#59 — returns the measure, not the entity: SELECT MIN(price) instead of the product. A repair would have to guess which column is the entity; the AST does not carry it.",
-      "sales_laptop_units": "#60 — COUNT(CASE WHEN ...) counts orders (3) where SUM(quantity) was meant (11). Both readings of 'how many' are legitimate; only the schema breaks the tie.",
-      "sales_products_over_200k": "#74 — a per-group threshold ('products generating more than 200000 in revenue') becomes a row-level WHERE instead of GROUP BY + HAVING SUM(...)."
-    },
-    "non_deterministic": [
-      "emp_joined_2021",
-      "sales_march_revenue",
-      "sales_electronics_by_region"
-    ],
-    "flaky_note": "emp_joined_2021 and sales_march_revenue passed 3/3 this round but were 2/3 last round; neither is the #69 defect (one invents an upper bound, one emits LIKE '%03-2024%'). Treat date as ~13-15/15, not a solid 15."
+  "distinct": {
+   "passed": 15,
+   "total": 15
   },
-  "floor_rationale": "Still 80, and still deliberately. Two rounds now sit at 90.6 and 94.7, but the spread between them is almost entirely two flaky date cases — which is exactly the argument against moving a CI gate on a small number of samples. `eval.yml` runs weekly; once three or more rounds exist on this code, set the floor ~6 points under the lowest observed. The floor's job is catching a category collapse, which 80 still does."
+  "filter": {
+   "passed": 30,
+   "total": 33
+  },
+  "group_by": {
+   "passed": 27,
+   "total": 27
+  },
+  "having": {
+   "passed": 3,
+   "total": 3
+  },
+  "intent": {
+   "passed": 12,
+   "total": 12
+  },
+  "ranking": {
+   "passed": 21,
+   "total": 24
+  }
+ },
+ "known_failures": {
+  "note": "Exactly two cases fail, each 0/3, and each has a named issue. Both turn on a semantic choice the SQL cannot reveal, and both have a failed prompt-fix attempt on record — read the 'Known gaps' section of PROJECT_STATUS.md before trying either again.",
+  "always_failing": {
+   "sales_cheapest_product": "#59 — returns the measure, not the entity: SELECT MIN(price) instead of the product. A repair would have to guess which column is the entity; the AST does not carry it.",
+   "sales_laptop_units": "#60 — COUNT(CASE WHEN ...) counts orders (3) where SUM(quantity) was meant (11). Both readings of 'how many' are legitimate; only the schema breaks the tie."
+  },
+  "non_deterministic": [
+   "emp_joined_2021",
+   "sales_march_revenue",
+   "sales_electronics_by_region"
+  ],
+  "flaky_note": "All three passed 3/3 this round and last, but emp_joined_2021 and sales_march_revenue were 2/3 two rounds ago (one invents an upper bound, one emits LIKE '%03-2024%'). Treat date as ~13-15/15, not a solid 15: a round where both fall the other way reads ~95.3% on this same code."
+ },
+ "floor_rationale": "Still 80, and still deliberately. Three rounds now sit at 90.6, 94.7 and 96.5, but the spread between them is largely two flaky date cases, which is exactly the argument against moving a CI gate on a small number of samples. The floor's job is catching a category collapse, which 80 still does. Revisit once several rounds exist on unchanged code — and note that the lowest observed round (86.0) predates three of the four repairs, so the honest lower bound for *this* code has not been measured yet."
 }

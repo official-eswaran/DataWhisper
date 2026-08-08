@@ -292,19 +292,31 @@ explicitly; they are what a clumsy fix breaks.
 
 ### 7e. `#74` — Aggregate thresholds become row-level filters (P2)
 
-- [ ] **Merged**
+- [x] **Merged** — 2026-08-08. `having` **0/3 → 3/3**, overall 94.7% → **96.5%**,
+  with every other category identical attempt-for-attempt. Fifth deterministic
+  repair, and the cleanest attribution of any round: there is no flaky-case
+  contribution to subtract.
 
-`having` is **0/3, the only category at zero**, and it is one case failing every
-run: "products generating more than 200000 in revenue" becomes a `WHERE` on
-individual orders instead of `GROUP BY product HAVING SUM(...)`. Wrong in both
-directions — reports a product with one large order, misses one with many small.
+  **It was expected to resist this approach, and the reason it didn't is worth
+  carrying forward.** The "which aggregate?" inference really is a guess, and
+  the repair declines rather than making it — only accumulation vocabulary
+  fires, and "averaged"/"highest"/"per" stop it dead. But the inference thought
+  to be equally hopeless — *is this an aggregate threshold at all?* — turned out
+  to be derivable from the **data**: "which orders had a total above 100000"
+  (correct as `WHERE`) and "which products generated more than 200000" (wrong as
+  `WHERE`) are indistinguishable by phrasing, and separated cleanly by whether
+  the projected column repeats across rows. `COUNT(DISTINCT x) < COUNT(*)`.
 
-**Harder than #69/#73, and worth knowing why before starting.** Two of the three
-things it must infer are derivable (the grouping key is the projected column;
-the phrasing signals an aggregate threshold) but the *third* — which aggregate —
-is a guess. "Generated more than X in revenue" implies SUM; "averaged more than
-X" implies AVG. A repair restricted to explicit total/sum vocabulary is
-defensible; a general one is guessing. That makes it closer to #59 than to #73.
+  So the table is a third source of derivable truth alongside the AST and the
+  question text, and it is the one nobody had looked at. #59 and #60 were
+  grouped with this issue on the assumption that all three were the same kind of
+  unanswerable; that assumption is now only proven for two of them.
+
+  **Wired into both query paths.** It went into `pipeline.py` first and *not*
+  the SSE route in `query.py` — which the eval cannot catch, because the eval
+  scores the pipeline while every real user goes through the stream.
+  `test_sql_repair.py` now asserts the two call sites apply the same set of
+  repairs, structurally, so this cannot recur silently.
 
 ### 7c. `#70` — Seven frontend components still untested (P2)
 

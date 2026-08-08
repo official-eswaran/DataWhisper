@@ -40,6 +40,7 @@ from app.nl2sql.sql_repair import (
     add_distinct_for_value_listing,
     add_missing_group_by,
     add_missing_group_keys,
+    move_aggregate_threshold_to_having,
     repair_date_period_bounds,
 )
 from app.nl2sql.sql_validator import validate_sql
@@ -256,6 +257,12 @@ async def ask_question_stream(
             # key to the projection itself, so order against #52's repair is
             # immaterial — it never leaves a GROUP BY for that one to find.
             generated_sql = add_missing_group_by(
+                generated_sql, req.question, conn
+            )
+            # An aggregate threshold that became a row filter (#74). Requires no
+            # GROUP BY and no aggregate in the projection — the shape neither of
+            # the two above leaves behind — so the order is immaterial.
+            generated_sql = move_aggregate_threshold_to_having(
                 generated_sql, req.question, conn
             )
 

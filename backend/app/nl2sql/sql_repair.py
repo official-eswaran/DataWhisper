@@ -688,3 +688,251 @@ def add_missing_group_by(sql: str, question: str, conn) -> str:
 
     logger.info("Added the GROUP BY a per-group question asked for")
     return repaired
+
+
+# ── Aggregate thresholds become row-level filters (issue #74) ─────────────────
+#
+# `having` was the only category at 0/3, and it is one case failing every run:
+#
+#   "Which products generated more than 200000 in revenue?"
+#     -> SELECT product FROM sales_data WHERE total_amount > 200000
+#     want SELECT product FROM sales_data GROUP BY product
+#          HAVING SUM(total_amount) > 200000
+#
+# The threshold applies to each product's *total*, a value that exists only
+# after grouping. Testing it against individual orders is wrong in both
+# directions and silently: a product with one 250k order is reported, a product
+# with fifty 10k orders is not, and every name in the output is real either way.
+#
+# Neither existing GROUP BY repair can reach it. #73 requires the projection to
+# aggregate (here it is a bare `SELECT product`), #52 requires a GROUP BY to
+# already exist. Both correctly decline; the transform needed is larger.
+#
+# ## The three inferences, and why only one of them is a guess
+#
+# 1. **The grouping key.** Derivable: it is the projected column.
+# 2. **That the threshold is an aggregate one.** This is the interesting one,
+#    because the same sentence shape is *correct* as a row filter:
+#
+#      "Which orders had a total amount above 100000?"  -> WHERE, correct
+#      "Which products generated more than 200000 …?"   -> HAVING, wrong today
+#
+#    The question text alone cannot separate them — both say "total". What
+#    separates them is the **data**: `order_id` identifies a row, so a per-order
+#    threshold *is* a row filter; `product` repeats across rows, so a per-product
+#    threshold cannot be evaluated one row at a time. So the guard is a query
+#    against the table, not a word: the projected column must have duplicates.
+#    That is derivable, in the sense #52/#69/#73 required and #59/#60 lacked.
+# 3. **Which aggregate.** The one genuine guess, and the reason the question
+#    cues below are as narrow as they are. "Generated more than X in revenue"
+#    implies SUM; "averaged more than X" implies AVG. Only accumulation
+#    vocabulary fires, and any word naming a different aggregate declines.
+#
+# Deliberately narrow beyond that: the WHERE clause must be exactly the one
+# threshold comparison. A compound `WHERE category = 'Electronics' AND
+# total_amount > 200000` needs the predicates split between WHERE and HAVING,
+# which is a bigger transform than the reported defect calls for.
+
+# Vocabulary that says the threshold applies to an accumulated total rather than
+# to one row. SUM is the only aggregate this repair introduces, so only
+# phrasings that unambiguously mean "added up" qualify.
+_SUM_THRESHOLD_CUES = re.compile(
+    r"\b(?:total(?:s|ed|led|ing|ling)?|combined|altogether|cumulative|accumulated|"
+    r"sum|summed|generat(?:e|es|ed|ing)|worth\s+of)\b"
+)
+
+# Vocabulary naming a *different* aggregate, or pinning the threshold to one
+# row. "Which products averaged more than 200000" is the same sentence shape
+# with a different answer, and guessing SUM there is worse than declining.
+_NOT_SUM_CUES = re.compile(
+    r"\b(?:average|averages|averaged|avg|mean|median|"
+    r"max|maximum|min|minimum|highest|lowest|largest|smallest|biggest|"
+    r"most|least|top|bottom|each|per|single|individual)\b"
+)
+
+# A date literal serialises as a VARCHAR constant, so requiring a numeric one
+# keeps "joined before 2020" — #69's territory — out of reach here.
+_NUMERIC_CONSTANT_IDS = frozenset(
+    "TINYINT SMALLINT INTEGER BIGINT HUGEINT "
+    "UTINYINT USMALLINT UINTEGER UBIGINT UHUGEINT "
+    "FLOAT DOUBLE DECIMAL".split()
+)
+
+
+def _asks_for_summed_threshold(question: str) -> bool:
+    q = question.casefold()
+    if _NOT_SUM_CUES.search(q):
+        return False
+    return bool(_SUM_THRESHOLD_CUES.search(q))
+
+
+def _numeric_constant(node: dict) -> bool:
+    """True if the node is a numeric literal — not a date, not a string."""
+    if node.get("class") != "CONSTANT":
+        return False
+    value = node.get("value") or {}
+    if value.get("is_null"):
+        return False
+    return str((value.get("type") or {}).get("id", "")).upper() in _NUMERIC_CONSTANT_IDS
+
+
+def _bare_column_name(node: dict) -> str | None:
+    """The single unqualified name a COLUMN_REF holds, or None.
+
+    Qualified references (``t.product``) return None: with one base table they
+    add nothing, and resolving them correctly is not worth guessing at.
+    """
+    key = _column_key(node)
+    return node["column_names"][0] if key is not None and len(key) == 1 else None
+
+
+def _quoted(identifier: str) -> str:
+    return '"' + identifier.replace('"', '""') + '"'
+
+
+def _repeats_across_rows(conn, table: str, column: str) -> bool:
+    """True when ``column`` has duplicate values — it names a group, not a row.
+
+    Both identifiers are resolved against ``information_schema`` by the caller
+    before reaching here, so they are a whitelist rather than free text; they
+    are quoted anyway.
+    """
+    try:
+        row = conn.execute(
+            f"SELECT COUNT(*), COUNT(DISTINCT {_quoted(column)}) FROM {_quoted(table)}"
+        ).fetchone()
+    except Exception as exc:  # noqa: BLE001 — repair is best-effort by design
+        logger.debug("having repair: could not measure cardinality (%s)", exc)
+        return False
+    if not row:
+        return False
+    total, distinct = row
+    # A table whose every value is distinct says the projected column identifies
+    # the row, so the row filter was right. An empty table needs no separate
+    # check: it counts (0, 0) and `0 < 0` already declines.
+    return distinct < total
+
+
+def move_aggregate_threshold_to_having(sql: str, question: str, conn) -> str:
+    """Turn a row-level threshold into the grouped one the question asked for.
+
+    ``SELECT entity FROM t WHERE measure > N`` becomes
+    ``SELECT entity FROM t GROUP BY entity HAVING SUM(measure) > N`` (#74).
+
+    Fires only when the question uses accumulation vocabulary and names no other
+    aggregate, the projection is a single bare column that repeats across rows,
+    and the WHERE clause is exactly one ``column <inequality> <number>``
+    comparison over one base table. Returns the input unchanged for anything
+    else. Never raises.
+    """
+    if not _asks_for_summed_threshold(question):
+        return sql
+
+    try:
+        serialized = conn.execute("SELECT json_serialize_sql(?::VARCHAR)", [sql]).fetchone()[0]
+        payload = json.loads(serialized)
+    except Exception as exc:  # noqa: BLE001 — repair is best-effort by design
+        logger.debug("having repair: could not parse SQL (%s)", exc)
+        return sql
+
+    if payload.get("error"):
+        return sql
+    statements = payload.get("statements") or []
+    if len(statements) != 1:
+        return sql
+    node = statements[0].get("node") or {}
+
+    if node.get("type") != _SELECT_NODE:
+        return sql
+    # Nothing may already be grouped, deduplicated, ranked or truncated: each of
+    # those means the model expressed an intent this would overwrite.
+    if node.get("group_expressions") or node.get("having"):
+        return sql
+    if node.get("modifiers") or node.get("qualify") or node.get("sample"):
+        return sql
+    if node.get("aggregate_handling") not in (None, "STANDARD_HANDLING"):
+        return sql
+
+    from_table = node.get("from_table") or {}
+    if from_table.get("type") != "BASE_TABLE":
+        return sql
+    table = from_table.get("table_name")
+    if not table:
+        return sql
+
+    # Exactly one bare column. A projected aggregate means the query already
+    # collapses rows and this is not the defect.
+    select_list = node.get("select_list") or []
+    if len(select_list) != 1:
+        return sql
+    entity = _bare_column_name(select_list[0])
+    if entity is None:
+        return sql
+
+    comparison = node.get("where_clause") or {}
+    if comparison.get("class") != "COMPARISON" or comparison.get("type") not in _LESS | _GREATER:
+        return sql
+    measure = _bare_column_name(comparison.get("left") or {})
+    if measure is None or not _numeric_constant(comparison.get("right") or {}):
+        return sql
+    # "Which quantities total more than 5?" — grouping a column by itself and
+    # summing it is not a reading of anything.
+    if entity.casefold() == measure.casefold():
+        return sql
+
+    by_folded = {c.casefold(): c for c in _table_columns(conn, table)}
+    entity_column = by_folded.get(entity.casefold())
+    measure_column = by_folded.get(measure.casefold())
+    if entity_column is None or measure_column is None:
+        return sql
+    # The check that separates "which orders…" from "which products…".
+    if not _repeats_across_rows(conn, table, entity_column):
+        return sql
+
+    having = json.loads(json.dumps(comparison))  # deep copy
+    having["left"] = {
+        "class": "FUNCTION",
+        "type": "FUNCTION",
+        "alias": "",
+        "query_location": 0,
+        "function_name": "sum",
+        "schema": "",
+        "children": [json.loads(json.dumps(comparison["left"]))],
+        "filter": None,
+        "order_bys": {"type": "ORDER_MODIFIER", "orders": []},
+        "distinct": False,
+        "is_operator": False,
+        "export_state": False,
+        "catalog": "",
+    }
+    node["having"] = having
+    node["where_clause"] = None
+    node["group_expressions"] = [json.loads(json.dumps(select_list[0]))]
+    node["group_sets"] = [[0]]
+
+    try:
+        repaired = conn.execute(
+            "SELECT json_deserialize_sql(?::JSON)", [json.dumps(payload)]
+        ).fetchone()[0]
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("having repair: could not rebuild SQL (%s)", exc)
+        return sql
+
+    if not repaired or not isinstance(repaired, str):
+        return sql
+
+    # SUM over a non-numeric column does not bind even though the literal it is
+    # compared against was numeric, so this is a real gate and not a formality.
+    try:
+        conn.execute(f"EXPLAIN {repaired}")
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("having repair: rewrite does not bind (%s)", exc)
+        return sql
+
+    from app.nl2sql.sql_validator import is_safe_sql
+
+    if not is_safe_sql(repaired):
+        return sql
+
+    logger.info("Moved a row-level threshold into HAVING over the summed measure")
+    return repaired

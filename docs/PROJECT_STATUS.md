@@ -1,6 +1,6 @@
 # Project status & how to resume
 
-**Last updated:** 2026-08-06
+**Last updated:** 2026-08-08
 **Branch of record:** `main`.
 
 > ⚠️ **`master` is not the branch of record and does not exist on the remote.**
@@ -25,7 +25,8 @@ finished.
 
 | Area | State |
 |------|-------|
-| Backend tests | **488 passing**, `ruff` clean, **91.15%** coverage, gate **85** (#28) |
+| Backend tests | **581 passing**, `ruff` clean, **90.59%** coverage, gate **85** (#28) |
+| NL2SQL accuracy | **96.5%** (3 repeats, cache off); 6 of 8 categories at 100% |
 | Frontend tests | **94 passing**, 5 of 12 components covered; **coverage gate now enforced** (#27) |
 | Build/runtime | Vite build OK, Node 24 (LTS), dependency audit clean |
 | E2E | Runs in GitHub Actions ✅; passes on attempt 1 since PR #63 (#45 fixed) |
@@ -68,6 +69,13 @@ finished.
 | #58 | **DISTINCT repair.** `distinct` 60% → **100%**, deterministic. |
 | #69 | **Date period repair.** `date` 7/15 → **13/15**; overall 87.1% → **90.6%** with no other category moving. |
 | #73 | **Missing-GROUP-BY repair.** `group_by` 22/27 → **27/27**; overall **94.7%**. Five categories now at 100%. |
+
+### Shipped 2026-08-08
+
+| Issue | What |
+|-------|------|
+| #74 | **Aggregate-threshold repair.** `having` 0/3 → **3/3** — the last category at zero. Overall 94.7% → **96.5%**, with every other category unmoved attempt-for-attempt. Fifth deterministic repair. The "which aggregate?" guess is handled by declining on any non-SUM vocabulary; the "is this even an aggregate threshold?" question turned out to be answerable from the *data* (does the projected column repeat?) rather than the phrasing. See "Known gaps". |
+| — | **Both query paths now provably apply the same repairs.** #74 was first wired into `pipeline.py` only — the eval would have scored it green while every real user, who goes through the SSE stream in `query.py`, still saw the bug. `test_sql_repair.py` now asserts the two call sites match, structurally, so the next repair is covered the day it is written. |
 | #59, #60 | **Attempted, measured, reverted — still open.** See the note below. |
 
 ### Shipped 2026-07-28 (audit session)
@@ -88,7 +96,7 @@ finished.
 ```bash
 # Backend (from backend/)
 export SECRET_KEY=$(python3 -c 'import secrets;print(secrets.token_hex(32))') DEBUG=true
-python3 -m pytest                       # expect 488 passed
+python3 -m pytest                       # expect 581 passed
 python3 -m ruff check app tests evals   # expect clean
 python3 -m pip_audit -r requirements.txt --strict   # --strict is what CI runs
 
@@ -326,14 +334,44 @@ None are blocking, but they're the honest loose ends:
   repair cannot touch `date`. A round where they fall the other way reads ~92.4%
   on identical code. This is why `baseline.json` records category tables.
 
-- **Three cases now fail, each 0/3, each with an issue — and all three are the
-  same *kind* of problem.** #59 (superlative returns the measure), #60 (units vs
-  orders), #74 (aggregate threshold becomes a row filter). Every one turns on a
-  semantic choice the SQL cannot reveal: which column is the entity, which
-  reading of "how many", which aggregate the threshold means. That is precisely
-  why they resisted the deterministic approach that fixed #52, #58, #69 and #73,
-  where the answer was always *derivable*. Expect these to be genuinely harder,
-  and do not read "four repairs worked" as "a fifth will".
+- ~~**Aggregate thresholds become row-level filters (#74)**~~ — **fixed**
+  2026-08-08. `having` **0/3 → 3/3**, overall 94.7% → **96.5%**. The cleanest
+  attribution of any round so far: +3 attempts, all three of them this category,
+  every other category identical attempt-for-attempt. Nothing to subtract.
+
+  **This file predicted it would resist a deterministic repair, and that was
+  half wrong — the useful half is *why*.** The prediction rested on three things
+  needing to be inferred, of which two looked underivable: which aggregate the
+  threshold means, and whether the threshold is an aggregate one at all. The
+  first really is a guess, and the repair handles it by declining — only
+  accumulation vocabulary ("generated", "total", "combined") fires, and any word
+  naming a different aggregate ("averaged", "highest") stops it dead.
+
+  The second turned out to be **derivable from the data, not the phrasing** —
+  which is what the analysis missed. Compare:
+
+  | question | correct SQL |
+  |---|---|
+  | "Which **orders** had a **total** amount above 100000?" | `WHERE` — passing today |
+  | "Which **products** **generated** more than 200000 in revenue?" | `GROUP BY … HAVING SUM(…)` |
+
+  Both say "total". No amount of vocabulary separates them. What does is that
+  `order_id` is unique and `product` repeats: a per-order threshold *is* a row
+  filter, and a per-product one cannot be evaluated a row at a time. So the
+  guard is `COUNT(DISTINCT entity) < COUNT(*)` against the real table — a
+  question with an answer, not a guess.
+
+  **The transferable lesson: "the SQL cannot reveal it" is not the same as "it
+  is not derivable."** #52/#58/#69/#73 all derived their answer from the AST or
+  the question text, so those were the two places anyone thought to look. The
+  table itself is a third source, and #59/#60 have not been re-examined against
+  it. That is not a promise either yields — see below — only that the reason
+  they were grouped with #74 no longer holds for all three.
+- **Two cases now fail, each 0/3, each with an issue.** #59 (superlative returns
+  the measure) and #60 (units vs orders). Both turn on a semantic choice, both
+  have a **failed, measured, reverted attempt on record**, and #60's attempt
+  fixed its own case while costing `ranking` 12.5 points — so "I made the target
+  case pass" is not evidence of anything. Read the note above before either.
 - ~~**Nothing watches for EOL runtimes (#47)**~~ — **fixed** 2026-08-06.
   `eol-watch.yml` runs monthly against `endoflife.date` and opens/updates one
   rolling issue. It parses the pins out of the real files rather than
@@ -411,12 +449,13 @@ someone provisions something. That is the honest state of the project.
    `Sidebar`, `ErrorBoundary`. One per PR; raise the thresholds as each lands.
 9. ~~PDF export truncation (#46)~~ — done 2026-08-03.
 10. ~~EOL-runtime watch (#47)~~ — done 2026-08-06.
-11. ~~Accuracy: #69 (dates)~~ — done 2026-08-06, `date` 7/15 → 13/15.
+11. ~~Accuracy: #69 (dates)~~, ~~#73 (per-group)~~, ~~#74 (HAVING)~~ — all done.
+    Accuracy is **96.5%** and six of eight categories are at 100%.
     **#59 and #60 remain, and both have a failed attempt on record** — read the
     note in "Known gaps" before touching either; the prompt fix each issue
-    recommends is the one that was tried and reverted. Three deterministic
-    repairs have now landed (#52, #58, #69) and every prompt edit attempted has
-    been reverted; that is the pattern to plan around.
+    recommends is the one that was tried and reverted. Five deterministic
+    repairs have now landed (#52, #58, #69, #73, #74) and every prompt edit
+    attempted has been reverted; that is the pattern to plan around.
 12. Billing feature gaps — proration, dunning, invoices (#31). Explicitly
     post-launch; **do not start before #19** proves the money path.
 
