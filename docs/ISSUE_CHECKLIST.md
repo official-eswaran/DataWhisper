@@ -331,6 +331,39 @@ carry the most risk per untested line.
 **One component per PR**, and **raise the thresholds in `vite.config.js` as each
 lands** — a gate that never moves is decoration, not a ratchet.
 
+**Progress**
+
+- [x] **`Login`** — 2026-08-09. 13 tests, `Login.jsx` to **100%** on all four
+  metrics; suite 94 → 107. Gate raised 60/85/50/60 → **64/90/56/64**.
+- [ ] `AdminConsole` · `AuditLogs` · `AccountSettings` · `Dashboard` ·
+  `Sidebar` · `ErrorBoundary`
+
+**"Raise the thresholds" needs a sharper test than it sounds — read this before
+the next one.** Raising them by the "few points under measured" rule the #27
+gate used does **not** protect the component you just covered: one component is
+worth ~0.6 points of statements, and the old gate had ~3.7 points of slack, so
+the first attempt at this PR passed with all 13 new tests deleted. The gate was
+decoration for precisely the coverage it had just gained.
+
+The check that actually means something, and the one to repeat every time:
+
+```bash
+rm src/components/<the component you just covered>.test.jsx
+npm test          # must exit NON-ZERO
+git checkout -- . # put it back
+```
+
+Thresholds now sit ~0.4 under measured rather than a few points. v8 coverage is
+deterministic, so tight thresholds do not flake — they fail only on a real drop.
+
+**Defects found while testing go in their own issue, not into the tests.**
+`Login` turned up one (**#77**: every backend failure — lockout, disabled
+account, rate limit — renders as "Invalid credentials"). Asserting the current
+message would have promoted the bug to a specification, so the suite carries a
+clearly-labelled characterization test that is mutation-verified to go **red the
+moment #77 is fixed**. Fixing it is then a deliberate edit, and the defect
+cannot be quietly forgotten.
+
 ### 8. `#31` — Billing feature gaps (P2)
 
 - [ ] **Merged**

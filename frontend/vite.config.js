@@ -41,20 +41,32 @@ export default defineConfig({
         // assert that the render tests don't already cover.
         "src/index.jsx",
       ],
-      // A floor, not a target. Measured on 2026-08-05: 63.72 statements /
-      // 90.11 branches / 53.4 functions. Each threshold sits a few points under
-      // so ordinary churn doesn't trip it, but deleting a suite does — which is
-      // the regression #27 is actually about.
+      // A floor, not a target. Measured on 2026-08-09: 64.37 statements /
+      // 90.73 branches / 56.81 functions / 64.37 lines.
       //
-      // Statements and functions are low because seven components are still
-      // untested (AdminConsole, AuditLogs, Dashboard, Sidebar, AccountSettings,
-      // Login, ErrorBoundary). Raise these as those land; the point today is
-      // that the number can no longer fall silently.
+      // **Set just under measured, and verify the gate bites (#70).** These sit
+      // ~0.4 under rather than the "few points" the original #27 gate used,
+      // because that headroom turned out to be wider than a whole component is
+      // worth: one component moves statements by ~0.6, so 60/85/50/60 still
+      // passed with Login's 13 tests deleted. The gate was decoration for
+      // exactly the coverage it had just gained.
+      //
+      // The check when raising these: delete the suite this PR added and
+      // confirm `npm test` exits non-zero. Statements and functions are what
+      // bite (63.72 and 53.4 without Login); branches barely moves per
+      // component and is carried by the others.
+      //
+      // v8 coverage is deterministic, so tight thresholds do not flake — they
+      // fail only when coverage genuinely drops, which is the intent. New
+      // uncovered code must come with tests or move the gate deliberately.
+      //
+      // Six components remain untested: AdminConsole, AuditLogs,
+      // AccountSettings, Dashboard, Sidebar, ErrorBoundary. One per PR.
       thresholds: {
-        statements: 60,
-        branches: 85,
-        functions: 50,
-        lines: 60,
+        statements: 64,
+        branches: 90,
+        functions: 56,
+        lines: 64,
       },
     },
   },
