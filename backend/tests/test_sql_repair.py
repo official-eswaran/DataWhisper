@@ -167,3 +167,57 @@ def test_outer_grouping_is_repaired_even_inside_a_cte(conn):
     assert out != sql
     assert _cols(conn, out)[0] == "region"
     assert conn.execute(out).fetchdf().shape == (2, 2)
+
+
+# ── Both execution paths must apply the same repairs ──────────────────────────
+
+
+def _repairs_called_in(module) -> set[str]:
+    """The `sql_repair` functions a module actually calls.
+
+    Reads the source rather than the imports: a name can be imported and then
+    not called, which is precisely the half-wiring this is here to catch.
+    """
+    import ast
+    import inspect
+
+    import app.nl2sql.sql_repair as sql_repair
+
+    exported = {
+        name for name, obj in vars(sql_repair).items()
+        if callable(obj) and not name.startswith("_")
+        and getattr(obj, "__module__", None) == sql_repair.__name__
+    }
+    tree = ast.parse(inspect.getsource(module))
+    return {
+        node.func.id
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+        and node.func.id in exported
+    }
+
+
+def test_the_streaming_and_non_streaming_paths_apply_the_same_repairs():
+    """Two call sites, and nothing but this test keeps them in step.
+
+    `pipeline.py` serves the non-streaming path; `query.py` serves the SSE
+    stream the UI actually uses. A repair wired into one and not the other is a
+    silent half-fix: the eval scores the pipeline and passes, while every real
+    user goes through the stream and still sees the bug. That mistake was made
+    while adding #74 and caught here.
+
+    Deliberately structural. Asserting the *set* of repairs rather than a list
+    of names means the next repair is covered the day it is written, without
+    anyone remembering to extend this.
+    """
+    from app.api.routes import query as query_route
+    from app.nl2sql import pipeline
+
+    streaming = _repairs_called_in(query_route)
+    non_streaming = _repairs_called_in(pipeline)
+
+    assert streaming, "found no repair calls at all — the AST walk has gone blind"
+    assert streaming == non_streaming, (
+        f"only in the stream: {streaming - non_streaming}; "
+        f"only in the pipeline: {non_streaming - streaming}"
+    )

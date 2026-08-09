@@ -23,6 +23,7 @@ from app.nl2sql.sql_repair import (
     add_distinct_for_value_listing,
     add_missing_group_by,
     add_missing_group_keys,
+    move_aggregate_threshold_to_having,
     repair_date_period_bounds,
 )
 from app.nl2sql.sql_validator import validate_and_fix_sql, validate_sql
@@ -135,6 +136,13 @@ class NL2SQLPipeline:
         # key to the projection itself, so order against #52's repair is
         # immaterial — it never leaves a GROUP BY for that one to find.
         generated_sql = add_missing_group_by(
+            generated_sql, user_question, self.conn
+        )
+        # An aggregate threshold that became a row filter (#74). Order against
+        # the two above is immaterial: this one requires no GROUP BY and no
+        # aggregate in the projection, which is exactly the shape neither of
+        # them leaves behind.
+        generated_sql = move_aggregate_threshold_to_having(
             generated_sql, user_question, self.conn
         )
 
