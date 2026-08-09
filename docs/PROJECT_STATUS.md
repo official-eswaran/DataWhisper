@@ -1,6 +1,6 @@
 # Project status & how to resume
 
-**Last updated:** 2026-08-08
+**Last updated:** 2026-08-09
 **Branch of record:** `main`.
 
 > ⚠️ **`master` is not the branch of record and does not exist on the remote.**
@@ -27,7 +27,7 @@ finished.
 |------|-------|
 | Backend tests | **581 passing**, `ruff` clean, **90.59%** coverage, gate **85** (#28) |
 | NL2SQL accuracy | **96.5%** (3 repeats, cache off); 6 of 8 categories at 100% |
-| Frontend tests | **94 passing**, 5 of 12 components covered; **coverage gate now enforced** (#27) |
+| Frontend tests | **107 passing**, 6 of 12 components covered; gate **64/90/56/64** (#27, #70) |
 | Build/runtime | Vite build OK, Node 24 (LTS), dependency audit clean |
 | E2E | Runs in GitHub Actions ✅; passes on attempt 1 since PR #63 (#45 fixed) |
 | Migrations | Head is `b92c4d17ae03` (email verification, #21) |
@@ -78,6 +78,13 @@ finished.
 | — | **Both query paths now provably apply the same repairs.** #74 was first wired into `pipeline.py` only — the eval would have scored it green while every real user, who goes through the SSE stream in `query.py`, still saw the bug. `test_sql_repair.py` now asserts the two call sites match, structurally, so the next repair is covered the day it is written. |
 | #59, #60 | **Attempted, measured, reverted — still open.** See the note below. |
 
+### Shipped 2026-08-09
+
+| Issue | What |
+|-------|------|
+| #70 | **`Login` covered** — first of the seven. 13 tests, component to 100% on all four metrics, suite 94 → 107. Gate ratcheted 60/85/50/60 → **64/90/56/64**, and *verified to bite*: the first attempt raised it by the old "few points under" rule and still passed with all 13 new tests deleted. Six components remain. |
+| #77 | **Filed, not fixed.** `Login` renders lockout, disabled-account and rate-limit failures all as "Invalid credentials". Found while writing the tests; kept out of the coverage PR, and pinned by a characterization test rather than asserted as correct. |
+
 ### Shipped 2026-07-28 (audit session)
 
 | PR | What |
@@ -103,7 +110,7 @@ python3 -m pip_audit -r requirements.txt --strict   # --strict is what CI runs
 # Frontend (from frontend/)
 npm ci
 npm run build                           # outputs to build/
-npm test                                # expect 94 passed; enforces coverage thresholds
+npm test                                # expect 107 passed; enforces coverage thresholds
 npm audit --omit=dev                    # see the allowlist note in ci.yml
 ```
 
@@ -290,14 +297,36 @@ None are blocking, but they're the honest loose ends:
   self-hosting, *not* fine for a public signup flow — wiring SMTP/a provider (or
   hCaptcha instead) is Track B and needs an account.
 - ~~**No frontend coverage gate (#27)**~~ — **gate fixed** 2026-08-06:
-  `npm test` is `vitest run --coverage` with thresholds in `vite.config.js`
-  (60 statements / 85 branches / 50 functions), enforced locally and in CI.
-  Proven: deleting a suite leaves 78 green tests and exits 1.
-  **Seven components remain uncovered** (**issue #70**) — `Login`,
-  `AdminConsole`, `AuditLogs`, `AccountSettings`, `Dashboard`, `Sidebar`,
-  `ErrorBoundary`. One per PR; raise the thresholds as each lands. The coverage config needs its explicit `include`:
-  without it the v8 provider also measures `build/assets/*.js` and reports a
-  number ~10 points below the truth.
+  `npm test` is `vitest run --coverage` with thresholds in `vite.config.js`,
+  enforced locally and in CI. Now **64 statements / 90 branches / 56 functions /
+  64 lines**. The coverage config needs its explicit `include`: without it the
+  v8 provider also measures `build/assets/*.js` and reports a number ~10 points
+  below the truth.
+
+  **`Login` covered 2026-08-09** (#70) — 13 tests, the component to 100% on all
+  four metrics, suite 94 → 107. **Six remain**: `AdminConsole`, `AuditLogs`,
+  `AccountSettings`, `Dashboard`, `Sidebar`, `ErrorBoundary`. One per PR.
+
+  **A raised gate is not automatically a ratchet, and this one wasn't.** Raising
+  the thresholds by the original "a few points under measured" rule left the
+  suite passing with all 13 of Login's new tests deleted — one component is
+  worth ~0.6 points of statements, and the slack was ~3.7. Whatever the gate
+  claimed, the coverage it had just gained was free to delete again. The
+  thresholds now sit ~0.4 under measured, and the rule for the next component is
+  to **delete the suite you just added and confirm `npm test` exits non-zero**
+  before opening the PR. v8 coverage is deterministic, so tight thresholds do
+  not flake.
+- **`Login` reports every failure as "Invalid credentials" (#77).** Found while
+  writing its tests. The backend distinguishes attempts-remaining, just-locked,
+  admin-disabled and rate-limited; the component's `catch` takes no binding and
+  discards all of it one line before display. So a locked-out user retries —
+  which is what the lockout is defending against — and a disabled account is
+  indistinguishable from a typo. Same defect class already fixed in `Signup`.
+
+  Kept out of the coverage PR deliberately, and **not asserted as correct**: the
+  suite carries a labelled characterization test pinning the collapse, verified
+  by mutation to go red the moment the mapping is fixed. A test that had asserted
+  the current message would have made the bug a specification.
 - ~~**The backend coverage gate is 70% while actual coverage is 90.4%**~~ —
   **fixed:** the gate is now 85 (#28). 85 rather than 90 because
   `core/billing.py` sits at 82%, so a 90 gate would fail on any billing change
@@ -444,9 +473,14 @@ someone provisions something. That is the honest state of the project.
 
 7. ~~Raise the backend coverage gate 70 → 85 (#28)~~ — done 2026-08-02.
 8. ~~Frontend coverage gate (#27)~~ — done 2026-08-06, `FileUpload` covered.
-   **The remaining seven components (#70) are the next cheap win**, in value
-   order: `Login`, `AdminConsole`, `AuditLogs`, `AccountSettings`, `Dashboard`,
-   `Sidebar`, `ErrorBoundary`. One per PR; raise the thresholds as each lands.
+   **`Login` done 2026-08-09; six components (#70) remain and are still the
+   cheapest win**, in value order: `AdminConsole`, `AuditLogs`,
+   `AccountSettings`, `Dashboard`, `Sidebar`, `ErrorBoundary`. One per PR, and
+   raise the thresholds as each lands — *then delete the suite you just wrote
+   and confirm `npm test` goes red*, because raising them is not the same as
+   ratcheting them. `AdminConsole`, `AuditLogs` and `AccountSettings` touch
+   other people's accounts and audit data, so they carry the most risk per
+   untested line.
 9. ~~PDF export truncation (#46)~~ — done 2026-08-03.
 10. ~~EOL-runtime watch (#47)~~ — done 2026-08-06.
 11. ~~Accuracy: #69 (dates)~~, ~~#73 (per-group)~~, ~~#74 (HAVING)~~ — all done.
