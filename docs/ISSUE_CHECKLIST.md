@@ -334,7 +334,8 @@ lands** — a gate that never moves is decoration, not a ratchet.
 **Progress**
 
 - [x] **`Login`** — 2026-08-09. 13 tests, `Login.jsx` to **100%** on all four
-  metrics; suite 94 → 107. Gate raised 60/85/50/60 → **64/90/56/64**.
+  metrics; suite 94 → 107. Gate raised 60/85/50/60 → **64/90/56/64**. The #77
+  fix that followed took it to 22 tests, suite 116, gate **64/91/57/64**.
 - [ ] `AdminConsole` · `AuditLogs` · `AccountSettings` · `Dashboard` ·
   `Sidebar` · `ErrorBoundary`
 
@@ -358,11 +359,25 @@ deterministic, so tight thresholds do not flake — they fail only on a real dro
 
 **Defects found while testing go in their own issue, not into the tests.**
 `Login` turned up one (**#77**: every backend failure — lockout, disabled
-account, rate limit — renders as "Invalid credentials"). Asserting the current
-message would have promoted the bug to a specification, so the suite carries a
-clearly-labelled characterization test that is mutation-verified to go **red the
-moment #77 is fixed**. Fixing it is then a deliberate edit, and the defect
-cannot be quietly forgotten.
+account, rate limit — rendered as "Invalid credentials"). Asserting the current
+message would have promoted the bug to a specification, so the coverage PR
+carried a clearly-labelled characterization test, mutation-verified to go red
+the moment the mapping was fixed.
+
+**That loop closed the same day** — #77 was fixed in the next PR and the
+characterization test was replaced by per-status assertions, including the
+inverse of the original (`seen.size` 1 → 4). Worth repeating for the remaining
+six: the pattern costs one extra PR and keeps a found defect from being either
+silently blessed or silently forgotten.
+
+The fix also turned up something the issue had not: **`429` has two unrelated
+causes.** The login route returns it for a per-account lockout, slowapi returns
+it for a per-IP rate limit, and they ask different things of the user. Only the
+response body separates them — so the mapping passes `detail` through for 401
+and 429 (where it carries the attempt count, the lockout duration, and that
+distinction), owns the wording for 403 (whose detail is accurate but not
+actionable), and falls back rather than echoing anything else, since a 500's
+detail is not written for end users.
 
 ### 8. `#31` — Billing feature gaps (P2)
 

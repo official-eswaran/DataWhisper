@@ -27,7 +27,7 @@ finished.
 |------|-------|
 | Backend tests | **581 passing**, `ruff` clean, **90.59%** coverage, gate **85** (#28) |
 | NL2SQL accuracy | **96.5%** (3 repeats, cache off); 6 of 8 categories at 100% |
-| Frontend tests | **107 passing**, 6 of 12 components covered; gate **64/90/56/64** (#27, #70) |
+| Frontend tests | **116 passing**, 6 of 12 components covered; gate **64/91/57/64** (#27, #70) |
 | Build/runtime | Vite build OK, Node 24 (LTS), dependency audit clean |
 | E2E | Runs in GitHub Actions ✅; passes on attempt 1 since PR #63 (#45 fixed) |
 | Migrations | Head is `b92c4d17ae03` (email verification, #21) |
@@ -83,7 +83,7 @@ finished.
 | Issue | What |
 |-------|------|
 | #70 | **`Login` covered** — first of the seven. 13 tests, component to 100% on all four metrics, suite 94 → 107. Gate ratcheted 60/85/50/60 → **64/90/56/64**, and *verified to bite*: the first attempt raised it by the old "few points under" rule and still passed with all 13 new tests deleted. Six components remain. |
-| #77 | **Filed, not fixed.** `Login` renders lockout, disabled-account and rate-limit failures all as "Invalid credentials". Found while writing the tests; kept out of the coverage PR, and pinned by a characterization test rather than asserted as correct. |
+| #77 | **`Login` failure messages fixed.** Lockout, disabled-account and rate-limit outcomes each say what actually happened, instead of all rendering as "Invalid credentials". Found while writing #70's tests, filed rather than folded in, then fixed straight after — and the characterization test that pinned the defect was replaced by per-status assertions. Note `429` has two unrelated causes (account lockout vs slowapi per-IP limit) that only the response body tells apart. Suite 107 → 116; gate 64/90/56/64 → **64/91/57/64**. |
 
 ### Shipped 2026-07-28 (audit session)
 
@@ -110,7 +110,7 @@ python3 -m pip_audit -r requirements.txt --strict   # --strict is what CI runs
 # Frontend (from frontend/)
 npm ci
 npm run build                           # outputs to build/
-npm test                                # expect 107 passed; enforces coverage thresholds
+npm test                                # expect 116 passed; enforces coverage thresholds
 npm audit --omit=dev                    # see the allowlist note in ci.yml
 ```
 
@@ -303,8 +303,8 @@ None are blocking, but they're the honest loose ends:
   v8 provider also measures `build/assets/*.js` and reports a number ~10 points
   below the truth.
 
-  **`Login` covered 2026-08-09** (#70) — 13 tests, the component to 100% on all
-  four metrics, suite 94 → 107. **Six remain**: `AdminConsole`, `AuditLogs`,
+  **`Login` covered 2026-08-09** (#70) — 22 tests (13 for the component, 9 more
+  with the #77 fix), the component to 100% on all four metrics, suite 94 → 116. **Six remain**: `AdminConsole`, `AuditLogs`,
   `AccountSettings`, `Dashboard`, `Sidebar`, `ErrorBoundary`. One per PR.
 
   **A raised gate is not automatically a ratchet, and this one wasn't.** Raising
@@ -316,17 +316,21 @@ None are blocking, but they're the honest loose ends:
   to **delete the suite you just added and confirm `npm test` exits non-zero**
   before opening the PR. v8 coverage is deterministic, so tight thresholds do
   not flake.
-- **`Login` reports every failure as "Invalid credentials" (#77).** Found while
-  writing its tests. The backend distinguishes attempts-remaining, just-locked,
-  admin-disabled and rate-limited; the component's `catch` takes no binding and
-  discards all of it one line before display. So a locked-out user retries —
-  which is what the lockout is defending against — and a disabled account is
-  indistinguishable from a typo. Same defect class already fixed in `Signup`.
+- ~~**`Login` reports every failure as "Invalid credentials" (#77)**~~ —
+  **fixed** 2026-08-09, immediately after the coverage PR that found it. Each of
+  the backend's outcomes now reaches the user distinctly, and the
+  characterization test that pinned the collapse was replaced by per-status
+  assertions — the workflow it was written for, start to finish.
 
-  Kept out of the coverage PR deliberately, and **not asserted as correct**: the
-  suite carries a labelled characterization test pinning the collapse, verified
-  by mutation to go red the moment the mapping is fixed. A test that had asserted
-  the current message would have made the bug a specification.
+  **The non-obvious part was `429`, which has two unrelated causes.** The login
+  route returns it for a per-account lockout, and slowapi returns it for a
+  per-IP rate limit ("Too many requests. Please slow down."). They call for
+  different things from the user, and only the response body separates them — so
+  the mapping passes `detail` through for 401 and 429, where it carries the
+  attempt count, the lockout duration, and that distinction. 403 is the
+  exception: its detail is accurate but says nothing to do next, so the UI owns
+  that wording. Unrecognised statuses fall back rather than echo a body, because
+  a 500's detail is not written for end users.
 - ~~**The backend coverage gate is 70% while actual coverage is 90.4%**~~ —
   **fixed:** the gate is now 85 (#28). 85 rather than 90 because
   `core/billing.py` sits at 82%, so a 90 gate would fail on any billing change

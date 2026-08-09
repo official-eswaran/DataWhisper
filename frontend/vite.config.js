@@ -41,8 +41,9 @@ export default defineConfig({
         // assert that the render tests don't already cover.
         "src/index.jsx",
       ],
-      // A floor, not a target. Measured on 2026-08-09: 64.37 statements /
-      // 90.73 branches / 56.81 functions / 64.37 lines.
+      // A floor, not a target. Measured on 2026-08-09: 64.56 statements /
+      // 91.24 branches / 57.3 functions / 64.56 lines (after #77 added the
+      // login error mapping and its branch coverage).
       //
       // **Set just under measured, and verify the gate bites (#70).** These sit
       // ~0.4 under rather than the "few points" the original #27 gate used,
@@ -64,8 +65,8 @@ export default defineConfig({
       // AccountSettings, Dashboard, Sidebar, ErrorBoundary. One per PR.
       thresholds: {
         statements: 64,
-        branches: 90,
-        functions: 56,
+        branches: 91,
+        functions: 57,
         lines: 64,
       },
     },
