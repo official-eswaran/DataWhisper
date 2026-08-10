@@ -41,9 +41,9 @@ export default defineConfig({
         // assert that the render tests don't already cover.
         "src/index.jsx",
       ],
-      // A floor, not a target. Measured on 2026-08-09: 64.56 statements /
-      // 91.24 branches / 57.3 functions / 64.56 lines (after #77 added the
-      // login error mapping and its branch coverage).
+      // A floor, not a target. Measured on 2026-08-10 with `AdminConsole`
+      // covered: 73.84 statements / 92.61 branches / 62.36 functions /
+      // 73.84 lines.
       //
       // **Set just under measured, and verify the gate bites (#70).** These sit
       // ~0.4 under rather than the "few points" the original #27 gate used,
@@ -64,10 +64,10 @@ export default defineConfig({
       // Six components remain untested: AdminConsole, AuditLogs,
       // AccountSettings, Dashboard, Sidebar, ErrorBoundary. One per PR.
       thresholds: {
-        statements: 64,
-        branches: 91,
-        functions: 57,
-        lines: 64,
+        statements: 73,
+        branches: 92,
+        functions: 62,
+        lines: 73,
       },
     },
   },

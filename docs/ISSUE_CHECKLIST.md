@@ -336,8 +336,22 @@ lands** — a gate that never moves is decoration, not a ratchet.
 - [x] **`Login`** — 2026-08-09. 13 tests, `Login.jsx` to **100%** on all four
   metrics; suite 94 → 107. Gate raised 60/85/50/60 → **64/90/56/64**. The #77
   fix that followed took it to 22 tests, suite 116, gate **64/91/57/64**.
-- [ ] `AdminConsole` · `AuditLogs` · `AccountSettings` · `Dashboard` ·
-  `Sidebar` · `ErrorBoundary`
+- [x] **`AdminConsole`** — 2026-08-10. 36 tests, to **100%** on all four
+  metrics; suite 116 → 152. Gate **64/91/57/64 → 73/92/62/73**. The highest-risk
+  component in the list, so the tests lean on the properties that matter rather
+  than on render output: the owner row has no deactivate button, the toggle
+  sends the *inverse* of the current state and the right username, `isOwner`
+  comes from the session role and not from the rendered table, and a billing
+  outage hides the card without costing an admin their team management.
+- [ ] `AuditLogs` · `AccountSettings` · `Dashboard` · `Sidebar` · `ErrorBoundary`
+
+**Mutation-test the tests, not just the component — a helper's defaults can
+swallow the case.** `AdminConsole`'s "user list missing its array" test was
+written as `mockHappyPath({ users: undefined })` and tested nothing: an explicit
+`undefined` triggers the parameter default, so the helper substituted the full
+list and the `|| []` guard could be deleted with the test still green. Only the
+mutation run found it. If a test passes a falsy or absent value *through a
+helper*, check the helper is not filling it back in.
 
 **"Raise the thresholds" needs a sharper test than it sounds — read this before
 the next one.** Raising them by the "few points under measured" rule the #27

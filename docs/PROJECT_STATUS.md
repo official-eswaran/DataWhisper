@@ -27,7 +27,7 @@ finished.
 |------|-------|
 | Backend tests | **581 passing**, `ruff` clean, **90.59%** coverage, gate **85** (#28) |
 | NL2SQL accuracy | **96.5%** (3 repeats, cache off); 6 of 8 categories at 100% |
-| Frontend tests | **116 passing**, 6 of 12 components covered; gate **64/91/57/64** (#27, #70) |
+| Frontend tests | **152 passing**, 7 of 12 components covered; gate **73/92/62/73** (#27, #70) |
 | Build/runtime | Vite build OK, Node 24 (LTS), dependency audit clean |
 | E2E | Runs in GitHub Actions ✅; passes on attempt 1 since PR #63 (#45 fixed) |
 | Migrations | Head is `b92c4d17ae03` (email verification, #21) |
@@ -78,6 +78,12 @@ finished.
 | — | **Both query paths now provably apply the same repairs.** #74 was first wired into `pipeline.py` only — the eval would have scored it green while every real user, who goes through the SSE stream in `query.py`, still saw the bug. `test_sql_repair.py` now asserts the two call sites match, structurally, so the next repair is covered the day it is written. |
 | #59, #60 | **Attempted, measured, reverted — still open.** See the note below. |
 
+### Shipped 2026-08-10
+
+| Issue | What |
+|-------|------|
+| #70 | **`AdminConsole` covered** — second of the seven, and the highest-risk one: the only place a person's action changes someone else's account. 36 tests, component to **100%** on all four metrics, suite 116 → 152. Gate **64/91/57/64 → 73/92/62/73**, verified to bite. 33 of 33 mutants killed, including "the owner row has a deactivate button" and "the toggle sends the current state instead of its inverse". |
+
 ### Shipped 2026-08-09
 
 | Issue | What |
@@ -110,7 +116,7 @@ python3 -m pip_audit -r requirements.txt --strict   # --strict is what CI runs
 # Frontend (from frontend/)
 npm ci
 npm run build                           # outputs to build/
-npm test                                # expect 116 passed; enforces coverage thresholds
+npm test                                # expect 152 passed; enforces coverage thresholds
 npm audit --omit=dev                    # see the allowlist note in ci.yml
 ```
 
@@ -303,8 +309,8 @@ None are blocking, but they're the honest loose ends:
   v8 provider also measures `build/assets/*.js` and reports a number ~10 points
   below the truth.
 
-  **`Login` covered 2026-08-09** (#70) — 22 tests (13 for the component, 9 more
-  with the #77 fix), the component to 100% on all four metrics, suite 94 → 116. **Six remain**: `AdminConsole`, `AuditLogs`,
+  **`Login` covered 2026-08-09**, **`AdminConsole` 2026-08-10** (#70) — both to
+  100% on all four metrics; suite 94 → 152. **Five remain**: `AuditLogs`,
   `AccountSettings`, `Dashboard`, `Sidebar`, `ErrorBoundary`. One per PR.
 
   **A raised gate is not automatically a ratchet, and this one wasn't.** Raising
