@@ -5,6 +5,41 @@ import toast from "react-hot-toast";
 import { FiDatabase, FiLock, FiUser } from "react-icons/fi";
 import "./Login.css";
 
+/**
+ * Turn a failed login into something the user can act on (issue #77).
+ *
+ * The backend distinguishes four outcomes on purpose and this used to collapse
+ * all of them into "Invalid credentials" — so a locked-out user retried, which
+ * is the behaviour the lockout exists to stop, and an admin-disabled account
+ * was indistinguishable from a typo.
+ *
+ * Where the API's own `detail` carries information the UI cannot reconstruct,
+ * it is preferred over a fixed string:
+ *
+ *   401  "…(3 attempt(s) remaining)" / "…Account locked for 15 minutes."
+ *        The count and the lockout notice exist only in the response.
+ *   429  Two different causes share this status — the per-account lockout from
+ *        the login route, and slowapi's per-IP limit ("Too many requests.
+ *        Please slow down."). Only `detail` tells them apart.
+ *
+ * 403 is the exception: its detail ("Account is disabled") is accurate but
+ * tells the user nothing to do next, so the UI owns that wording.
+ *
+ * Anything unrecognised falls back to a generic message rather than echoing an
+ * arbitrary body — a 500's detail is not written for end users.
+ */
+function loginErrorMessage(err) {
+  const status = err?.response?.status;
+  const detail = err?.response?.data?.detail;
+  const fromApi = typeof detail === "string" && detail.trim() ? detail.trim() : null;
+
+  if (status === 401) return fromApi || "Invalid username or password";
+  if (status === 403) return "This account has been disabled. Contact your administrator.";
+  if (status === 429) return fromApi || "Too many attempts. Please wait and try again.";
+  if (!err?.response) return "Could not reach the server. Check your connection.";
+  return "Could not sign you in. Please try again.";
+}
+
 function Login({ onLogin }) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -17,8 +52,8 @@ function Login({ onLogin }) {
       const res = await login(username, password);
       onLogin(res.data);
       toast.success("Welcome back!");
-    } catch {
-      toast.error("Invalid credentials");
+    } catch (err) {
+      toast.error(loginErrorMessage(err));
     } finally {
       setLoading(false);
     }

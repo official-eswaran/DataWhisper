@@ -208,51 +208,113 @@ test("the typed password is never echoed into the failure toast", async () => {
   }
 });
 
-// ── The failure message is wrong on purpose — see the issue ──────────────────
+// ── Each failure reason reaches the user distinctly (#77) ────────────────────
+//
+// These replace a characterization test that pinned the old behaviour: every
+// failure below used to render as "Invalid credentials". Three of the four are
+// not credential problems at all, and presenting them as one meant a
+// locked-out user retried — which is exactly what the lockout defends against.
 
-test("every backend failure reason collapses into one message (known defect)", async () => {
-  // NOT a specification — this pins current behaviour, tracked as issue #77.
-  // It keeps the defect visible in the suite rather than buried in the
-  // component, and makes fixing it a deliberate edit to this test rather than a
-  // surprise red run. When #77 lands, replace this with per-status assertions.
-  //
-  // `backend/app/api/routes/auth.py` distinguishes four outcomes on purpose:
-  //
-  //   401 "Invalid username or password (3 attempt(s) remaining)"
-  //   401 "Invalid credentials. Account locked for 15 minutes."
-  //   403 "Account is disabled"
-  //   429 "Account locked due to too many failed attempts. Try again later."
-  //
-  // The component's `catch` ignores the error entirely and shows the same
-  // string for all of them. A locked-out user and an admin-disabled user both
-  // read "Invalid credentials" and retry forever, and the attempts-remaining
-  // warning — which exists precisely to prevent lockout — never arrives.
-  //
-  // This is the same defect that was found and fixed in Signup, whose failures
-  // used to collapse into "Please check your details and try again".
-  const outcomes = [
-    httpError(401, { detail: "Invalid username or password (3 attempt(s) remaining)" }),
-    httpError(401, { detail: "Invalid credentials. Account locked for 15 minutes." }),
-    httpError(403, { detail: "Account is disabled" }),
-    httpError(429, { detail: "Account locked due to too many failed attempts." }),
-  ];
+/** Submit against a rejection and return the message the user was shown. */
+async function messageFor(rejection) {
+  vi.clearAllMocks();
+  login.mockRejectedValue(rejection);
+  const { unmount } = render(
+    <MemoryRouter>
+      <Login onLogin={vi.fn()} />
+    </MemoryRouter>
+  );
+  await fillAndSubmit();
+  await waitFor(() => expect(toast.error).toHaveBeenCalled());
+  const [message] = toast.error.mock.calls[0];
+  unmount();
+  return message;
+}
 
-  const seen = new Set();
-  for (const outcome of outcomes) {
-    vi.clearAllMocks();
-    login.mockRejectedValue(outcome);
-    const { unmount } = render(
-      <MemoryRouter>
-        <Login onLogin={vi.fn()} />
-      </MemoryRouter>
-    );
-    await fillAndSubmit();
-    await waitFor(() => expect(toast.error).toHaveBeenCalled());
-    seen.add(toast.error.mock.calls[0][0]);
-    unmount();
-  }
+test("a 401 passes through the attempts-remaining warning", async () => {
+  // The count exists only in the response, and the warning exists precisely so
+  // the user can stop before lockout. A fixed string cannot carry it.
+  const message = await messageFor(
+    httpError(401, { detail: "Invalid username or password (3 attempt(s) remaining)" })
+  );
+  expect(message).toMatch(/3 attempt/i);
+});
 
-  // Four distinct causes, one message. When this is fixed, `seen.size` becomes
-  // 4 and this test should be replaced by per-status assertions.
-  expect(seen.size).toBe(1);
+test("a 401 that reports a lockout says so, rather than 'wrong password'", async () => {
+  const message = await messageFor(
+    httpError(401, { detail: "Invalid credentials. Account locked for 15 minutes." })
+  );
+  expect(message).toMatch(/locked/i);
+  expect(message).toMatch(/15 minutes/i);
+});
+
+test("a 401 with no detail still says something specific", async () => {
+  const message = await messageFor(httpError(401, {}));
+  expect(message).toMatch(/invalid username or password/i);
+});
+
+test("a blank detail falls back instead of showing an empty toast", async () => {
+  // `detail: ""` already falls through on falsiness, but `"   "` is truthy and
+  // would render a toast with nothing in it. The `.trim()` is what stops that.
+  const message = await messageFor(httpError(401, { detail: "   " }));
+  expect(message).toMatch(/invalid username or password/i);
+});
+
+test("a 403 tells the user the account is disabled and who to ask", async () => {
+  // Retrying can never succeed, so the message has to point somewhere else.
+  // The UI owns this wording: the API's "Account is disabled" is accurate but
+  // gives the user nothing to do.
+  const message = await messageFor(httpError(403, { detail: "Account is disabled" }));
+  expect(message).toMatch(/disabled/i);
+  expect(message).toMatch(/administrator/i);
+});
+
+test("a 429 distinguishes an account lockout from an IP rate limit", async () => {
+  // Both arrive as 429 — the lockout from the login route, the other from
+  // slowapi — and they call for different responses from the user. Only the
+  // detail tells them apart, which is why it is passed through.
+  const locked = await messageFor(
+    httpError(429, { detail: "Account locked due to too many failed attempts. Try again later." })
+  );
+  const throttled = await messageFor(
+    httpError(429, { detail: "Too many requests. Please slow down." })
+  );
+
+  expect(locked).toMatch(/account locked/i);
+  expect(throttled).toMatch(/slow down/i);
+  expect(locked).not.toBe(throttled);
+});
+
+test("a 429 with no detail still tells the user to wait", async () => {
+  const message = await messageFor(httpError(429, {}));
+  expect(message).toMatch(/wait|too many/i);
+});
+
+test("a network failure blames the connection, not the credentials", async () => {
+  // No `response` at all. Telling this user their password is wrong sends them
+  // to reset a credential that was never the problem.
+  const message = await messageFor(new Error("Network Error"));
+  expect(message).toMatch(/could not reach the server|connection/i);
+  expect(message).not.toMatch(/password|credential/i);
+});
+
+test("an unrecognised status falls back without echoing the API body", async () => {
+  // A 500's detail is not written for end users and may describe internals.
+  const message = await messageFor(
+    httpError(500, { detail: "psycopg2.OperationalError: FATAL: too many connections" })
+  );
+  expect(message).toMatch(/could not sign you in/i);
+  expect(message).not.toMatch(/psycopg2|OperationalError/i);
+});
+
+test("the four backend outcomes now produce four different messages", async () => {
+  // The direct inverse of the characterization test this replaces, which
+  // asserted `seen.size === 1`.
+  const seen = new Set([
+    await messageFor(httpError(401, { detail: "Invalid username or password (3 attempt(s) remaining)" })),
+    await messageFor(httpError(401, { detail: "Invalid credentials. Account locked for 15 minutes." })),
+    await messageFor(httpError(403, { detail: "Account is disabled" })),
+    await messageFor(httpError(429, { detail: "Account locked due to too many failed attempts." })),
+  ]);
+  expect(seen.size).toBe(4);
 });
