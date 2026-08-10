@@ -343,7 +343,11 @@ lands** — a gate that never moves is decoration, not a ratchet.
   sends the *inverse* of the current state and the right username, `isOwner`
   comes from the session role and not from the rendered table, and a billing
   outage hides the card without costing an admin their team management.
-- [ ] `AuditLogs` · `AccountSettings` · `Dashboard` · `Sidebar` · `ErrorBoundary`
+- [x] **`AuditLogs`** — 2026-08-10. 25 tests, to **100%** on all four metrics;
+  suite 152 → 177, overall **80.31%**. Gate **73/92/62/73 → 80/93/64/80**.
+  25 of 25 mutants killed. Turned up **#82** (a failed fetch renders as an empty
+  trail), filed and pinned rather than blessed — the same loop as #77.
+- [ ] `AccountSettings` · `Dashboard` · `Sidebar` · `ErrorBoundary`
 
 **Mutation-test the tests, not just the component — a helper's defaults can
 swallow the case.** `AdminConsole`'s "user list missing its array" test was

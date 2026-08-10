@@ -27,7 +27,7 @@ finished.
 |------|-------|
 | Backend tests | **581 passing**, `ruff` clean, **90.59%** coverage, gate **85** (#28) |
 | NL2SQL accuracy | **96.5%** (3 repeats, cache off); 6 of 8 categories at 100% |
-| Frontend tests | **152 passing**, 7 of 12 components covered; gate **73/92/62/73** (#27, #70) |
+| Frontend tests | **177 passing**, 8 of 12 components covered; gate **80/93/64/80** (#27, #70) |
 | Build/runtime | Vite build OK, Node 24 (LTS), dependency audit clean |
 | E2E | Runs in GitHub Actions ✅; passes on attempt 1 since PR #63 (#45 fixed) |
 | Migrations | Head is `b92c4d17ae03` (email verification, #21) |
@@ -82,6 +82,8 @@ finished.
 
 | Issue | What |
 |-------|------|
+| #70 | **`AuditLogs` covered** — third of the seven. 25 tests, component to **100%** on all four metrics, suite 152 → 177; overall coverage now **80.31%**. Gate **73/92/62/73 → 80/93/64/80**. 25 of 25 mutants killed. |
+| #82 | **Filed, not fixed.** A failed audit-log fetch renders as "No audit logs yet. Start asking questions!" — the page asserts the trail is empty when it simply failed to load, which for an *audit* trail is a wrong answer to the question the page exists to answer. Pinned by a characterization test rather than asserted as correct. |
 | #70 | **`AdminConsole` covered** — second of the seven, and the highest-risk one: the only place a person's action changes someone else's account. 36 tests, component to **100%** on all four metrics, suite 116 → 152. Gate **64/91/57/64 → 73/92/62/73**, verified to bite. 33 of 33 mutants killed, including "the owner row has a deactivate button" and "the toggle sends the current state instead of its inverse". |
 
 ### Shipped 2026-08-09
@@ -116,7 +118,7 @@ python3 -m pip_audit -r requirements.txt --strict   # --strict is what CI runs
 # Frontend (from frontend/)
 npm ci
 npm run build                           # outputs to build/
-npm test                                # expect 152 passed; enforces coverage thresholds
+npm test                                # expect 177 passed; enforces coverage thresholds
 npm audit --omit=dev                    # see the allowlist note in ci.yml
 ```
 
@@ -309,9 +311,10 @@ None are blocking, but they're the honest loose ends:
   v8 provider also measures `build/assets/*.js` and reports a number ~10 points
   below the truth.
 
-  **`Login` covered 2026-08-09**, **`AdminConsole` 2026-08-10** (#70) — both to
-  100% on all four metrics; suite 94 → 152. **Five remain**: `AuditLogs`,
-  `AccountSettings`, `Dashboard`, `Sidebar`, `ErrorBoundary`. One per PR.
+  **`Login` 2026-08-09**, **`AdminConsole` and `AuditLogs` 2026-08-10** (#70) —
+  all three to 100% on all four metrics; suite 94 → 177, overall coverage
+  63.72% → **80.31%**. **Four remain**: `AccountSettings`, `Dashboard`,
+  `Sidebar`, `ErrorBoundary`. One per PR.
 
   **A raised gate is not automatically a ratchet, and this one wasn't.** Raising
   the thresholds by the original "a few points under measured" rule left the
