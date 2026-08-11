@@ -226,6 +226,26 @@
   font-size: 14px;
 }
 
+/* Deliberately not muted like .audit-empty (#82): a failed load is not a quiet
+   background state, and it must not be mistaken for "the trail is empty". */
+.audit-error {
+  text-align: center;
+  padding: 48px 24px;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.audit-error p:first-child {
+  color: var(--danger, #dc2626);
+  margin-bottom: 8px;
+}
+
+.audit-error p:last-child {
+  color: var(--text-muted);
+  max-width: 46ch;
+  margin: 0 auto;
+}
+
 @media (max-width: 768px) {
   .audit-stats {
     flex-direction: column;

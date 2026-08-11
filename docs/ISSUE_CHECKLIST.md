@@ -346,7 +346,14 @@ lands** — a gate that never moves is decoration, not a ratchet.
 - [x] **`AuditLogs`** — 2026-08-10. 25 tests, to **100%** on all four metrics;
   suite 152 → 177, overall **80.31%**. Gate **73/92/62/73 → 80/93/64/80**.
   25 of 25 mutants killed. Turned up **#82** (a failed fetch renders as an empty
-  trail), filed and pinned rather than blessed — the same loop as #77.
+  trail), filed and pinned rather than blessed — the same loop as #77, and
+  **fixed in the next PR** (suite → 183), with the characterization test
+  replaced by real assertions.
+
+  Worth carrying forward: **the misleading copy was only half that defect.** The
+  stat tiles still read "Total Queries 0", which asserts an empty trail exactly
+  as plainly as the sentence did. When a load failure is the bug, check
+  everything on the page that implies a count — not just the message.
 - [ ] `AccountSettings` · `Dashboard` · `Sidebar` · `ErrorBoundary`
 
 **Mutation-test the tests, not just the component — a helper's defaults can

@@ -8,11 +8,14 @@ import { getAuditLogs } from "../../services/api";
 // or security question gets answered from. Coverage was 4% of statements and 0%
 // of functions.
 //
-// One behaviour below is pinned as a known defect rather than asserted as
-// correct — see "a failed fetch is indistinguishable from an empty trail" at
-// the bottom, and issue #82.
+// The failure path at the bottom was a known defect (#82) when this file was
+// written: a failed fetch rendered "No audit logs yet. Start asking questions!".
+// It is now fixed, and those tests assert the fix rather than pin the defect.
 
 vi.mock("../../services/api", () => ({ getAuditLogs: vi.fn() }));
+vi.mock("react-hot-toast", () => ({ default: { error: vi.fn(), success: vi.fn() } }));
+
+const toast = (await import("react-hot-toast")).default;
 
 const LOGS = [
   {
@@ -295,41 +298,90 @@ test("filtering renumbers the rows rather than preserving the original index", a
   expect(cells).toEqual(["1", "2"]);
 });
 
-// ── A failed fetch looks like an empty trail — known defect (#82) ────────────
+// ── A failed fetch must not read as an empty trail (#82) ─────────────────────
+//
+// These replace a characterization test that pinned the old behaviour, where a
+// failed fetch rendered "No audit logs yet. Start asking questions!". For an
+// audit trail that is a wrong answer to the question the page exists to answer.
 
-test("a failed fetch is indistinguishable from an empty trail (known defect)", async () => {
-  // NOT a specification. Pinned so the defect is visible in the suite and so
-  // fixing it is a deliberate edit here rather than a surprise red run.
-  //
-  // `fetchLogs` catches and does `setLogs([])` with nothing surfaced, so a 500,
-  // a dropped connection or an expired session all render:
-  //
-  //     "No audit logs yet. Start asking questions!"
-  //
-  // For an audit trail specifically, that is the worst available wording: it
-  // tells someone checking the record that nothing happened. Every other
-  // component in this directory reports a load failure — AdminConsole raises a
-  // toast for exactly this case.
-  //
-  // Tracked as #82. When fixed, replace this with an assertion that the failure
-  // is reported and that the empty-state copy is not shown.
-  getAuditLogs.mockRejectedValue(new Error("Network Error"));
+async function renderFailed(rejection = new Error("Network Error")) {
+  getAuditLogs.mockRejectedValue(rejection);
   render(<AuditLogs />);
   await waitFor(() =>
     expect(screen.queryByText(/loading audit logs/i)).not.toBeInTheDocument()
   );
+}
 
-  expect(screen.getByText(/no audit logs yet. start asking questions/i)).toBeInTheDocument();
+test("a failed fetch says the request failed, not that the trail is empty", async () => {
+  await renderFailed();
+
+  expect(screen.getByRole("alert")).toHaveTextContent(/could not load the audit trail/i);
+  expect(screen.queryByText(/no audit logs yet/i)).not.toBeInTheDocument();
+  expect(screen.queryByText(/start asking questions/i)).not.toBeInTheDocument();
+});
+
+test("the failure message says no conclusion can be drawn", async () => {
+  // The substantive half of #82. "Could not load" alone still leaves a reader
+  // to guess; the page has to state that emptiness is not the finding, because
+  // someone is here to answer "was anything queried?" and the honest answer is
+  // "we don't know".
+  await renderFailed();
+
+  const alert = screen.getByRole("alert");
+  expect(alert).toHaveTextContent(/does not mean the trail is empty/i);
+  expect(alert).toHaveTextContent(/refresh/i);
+});
+
+test("the stat tiles are hidden on failure rather than left reading zero", async () => {
+  // "Total Queries 0" asserts an empty trail exactly as plainly as the copy
+  // did. Fixing only the message would have left the same false claim on screen.
+  await renderFailed();
+
+  expect(screen.queryByText("Total Queries")).not.toBeInTheDocument();
+  expect(screen.queryByText("Data Queries")).not.toBeInTheDocument();
+  expect(screen.queryByText("Chat / Off-topic")).not.toBeInTheDocument();
+});
+
+test("the failure is also surfaced as a toast, like the sibling components", async () => {
+  await renderFailed();
+  expect(toast.error).toHaveBeenCalledWith("Could not load the audit trail");
+});
+
+test("no table is rendered on failure", async () => {
+  await renderFailed();
   expect(screen.queryByRole("table")).not.toBeInTheDocument();
 });
 
-test("a failed fetch still clears the loading state and leaves refresh usable", async () => {
-  // Correct today and worth keeping whatever #82 does to the messaging: the
-  // `finally` is what lets the user retry at all.
-  getAuditLogs.mockRejectedValue(new Error("Network Error"));
-  render(<AuditLogs />);
+test("a failed fetch clears the loading state and leaves refresh usable", async () => {
+  // The `finally` is what makes retry possible at all, and the error copy
+  // points at Refresh, so this has to hold.
+  await renderFailed();
+  expect(screen.getByRole("button", { name: /refresh/i })).not.toBeDisabled();
+});
 
-  await waitFor(() =>
-    expect(screen.getByRole("button", { name: /refresh/i })).not.toBeDisabled()
-  );
+test("a successful retry clears the banner and restores the trail", async () => {
+  // `setFailed(false)` on success. Without it the banner is permanent and the
+  // page keeps claiming a failure that has since been fixed — which is the same
+  // class of lie as the original defect, pointing the other way.
+  await renderFailed();
+  expect(screen.getByRole("alert")).toBeInTheDocument();
+
+  getAuditLogs.mockResolvedValue(envelope(LOGS));
+  await act(async () => {
+    await userEvent.click(screen.getByRole("button", { name: /refresh/i }));
+  });
+
+  await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
+  expect(screen.getByRole("table")).toBeInTheDocument();
+  expect(screen.getByText("Total Queries")).toBeInTheDocument();
+});
+
+test("a genuinely empty trail still gets the friendly empty state", async () => {
+  // The other side of the distinction: this fix must not turn every empty
+  // workspace into an error.
+  await renderLogs([]);
+
+  expect(screen.getByText(/no audit logs yet. start asking questions/i)).toBeInTheDocument();
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(toast.error).not.toHaveBeenCalled();
 });
