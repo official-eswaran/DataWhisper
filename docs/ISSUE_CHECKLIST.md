@@ -366,7 +366,19 @@ lands** — a gate that never moves is decoration, not a ratchet.
   anything: `URL.createObjectURL` does not exist, so it must be **assigned**
   rather than `vi.spyOn`'d (spying on a missing method throws), and jsdom's
   `Blob` has no `.text()` — read it with `FileReader`.
-- [ ] `Dashboard` · `Sidebar` · `ErrorBoundary`
+- [x] **`Dashboard`** — 2026-08-11. 24 tests, to **100%** on all four metrics;
+  suite 209 → 233, overall **88.59%**. Gate **85/93/66/85 → 88/94/68/88**.
+  21 of 22 mutants killed. Covers the Stripe return path, where the notable
+  assertion is that the success toast stays hedged: the plan changes on the
+  webhook, not the redirect, so "you're upgraded" would be a claim the app
+  cannot back up — and a lie if the webhook then fails.
+
+  The surviving mutant is worth reading rather than fixing: removing the
+  effect's `[]` dependency array leaves the suite green, because **stripping
+  the `?status=` marker** is what actually makes the effect idempotent — the
+  second run finds no status and returns early. Deliberate redundancy, and the
+  marker strip has its own test.
+- [ ] `Sidebar` · `ErrorBoundary`
 
 **Mutation-test the tests, not just the component — a helper's defaults can
 swallow the case.** `AdminConsole`'s "user list missing its array" test was
