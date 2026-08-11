@@ -27,7 +27,7 @@ finished.
 |------|-------|
 | Backend tests | **581 passing**, `ruff` clean, **90.59%** coverage, gate **85** (#28) |
 | NL2SQL accuracy | **96.5%** (3 repeats, cache off); 6 of 8 categories at 100% |
-| Frontend tests | **183 passing**, 8 of 12 components covered; gate **80/93/64/80** (#27, #70) |
+| Frontend tests | **209 passing**, 9 of 12 components covered; gate **85/93/66/85** (#27, #70) |
 | Build/runtime | Vite build OK, Node 24 (LTS), dependency audit clean |
 | E2E | Runs in GitHub Actions ✅; passes on attempt 1 since PR #63 (#45 fixed) |
 | Migrations | Head is `b92c4d17ae03` (email verification, #21) |
@@ -78,6 +78,12 @@ finished.
 | — | **Both query paths now provably apply the same repairs.** #74 was first wired into `pipeline.py` only — the eval would have scored it green while every real user, who goes through the SSE stream in `query.py`, still saw the bug. `test_sql_repair.py` now asserts the two call sites match, structurally, so the next repair is covered the day it is written. |
 | #59, #60 | **Attempted, measured, reverted — still open.** See the note below. |
 
+### Shipped 2026-08-11
+
+| Issue | What |
+|-------|------|
+| #70 | **`AccountSettings` covered** — fourth of the seven, and the last of the destructive ones: GDPR export, account deletion, and the only control in the product that deletes an entire organization. 26 tests, component to **100%** on all four metrics, suite 183 → 209; overall **85.43%**. Gate **80/93/64/80 → 85/93/66/85**. 21 of 21 mutants killed, including both `window.confirm` gates and "the org control is shown to everyone". |
+
 ### Shipped 2026-08-10
 
 | Issue | What |
@@ -118,7 +124,7 @@ python3 -m pip_audit -r requirements.txt --strict   # --strict is what CI runs
 # Frontend (from frontend/)
 npm ci
 npm run build                           # outputs to build/
-npm test                                # expect 183 passed; enforces coverage thresholds
+npm test                                # expect 209 passed; enforces coverage thresholds
 npm audit --omit=dev                    # see the allowlist note in ci.yml
 ```
 
@@ -311,10 +317,12 @@ None are blocking, but they're the honest loose ends:
   v8 provider also measures `build/assets/*.js` and reports a number ~10 points
   below the truth.
 
-  **`Login` 2026-08-09**, **`AdminConsole` and `AuditLogs` 2026-08-10** (#70) —
-  all three to 100% on all four metrics; suite 94 → 177, overall coverage
-  63.72% → **80.31%**. **Four remain**: `AccountSettings`, `Dashboard`,
-  `Sidebar`, `ErrorBoundary`. One per PR.
+  **`Login` 2026-08-09**, **`AdminConsole` and `AuditLogs` 2026-08-10**,
+  **`AccountSettings` 2026-08-11** (#70) — all four to 100% on all four metrics;
+  suite 94 → 209, overall coverage 63.72% → **85.43%**. **Three remain**:
+  `Dashboard`, `Sidebar`, `ErrorBoundary`. One per PR, and they are the light
+  ones — everything touching accounts, audit data or destructive actions is
+  now covered.
 
   **A raised gate is not automatically a ratchet, and this one wasn't.** Raising
   the thresholds by the original "a few points under measured" rule left the

@@ -354,7 +354,19 @@ lands** — a gate that never moves is decoration, not a ratchet.
   stat tiles still read "Total Queries 0", which asserts an empty trail exactly
   as plainly as the sentence did. When a load failure is the bug, check
   everything on the page that implies a count — not just the message.
-- [ ] `AccountSettings` · `Dashboard` · `Sidebar` · `ErrorBoundary`
+- [x] **`AccountSettings`** — 2026-08-11. 26 tests, to **100%** on all four
+  metrics; suite 183 → 209, overall **85.43%**. Gate **80/93/64/80 →
+  85/93/66/85**. 21 of 21 mutants killed. The destructive component: the tests
+  that matter are the ones asserting *nothing happens* — cancelling either
+  `window.confirm` calls no API, a non-owner is never offered organization
+  deletion, and a failed delete does not log the user out (which would strand
+  them outside an account that still exists).
+
+  Two jsdom gaps worth knowing before the next component that downloads
+  anything: `URL.createObjectURL` does not exist, so it must be **assigned**
+  rather than `vi.spyOn`'d (spying on a missing method throws), and jsdom's
+  `Blob` has no `.text()` — read it with `FileReader`.
+- [ ] `Dashboard` · `Sidebar` · `ErrorBoundary`
 
 **Mutation-test the tests, not just the component — a helper's defaults can
 swallow the case.** `AdminConsole`'s "user list missing its array" test was
