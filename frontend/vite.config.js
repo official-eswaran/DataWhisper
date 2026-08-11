@@ -41,9 +41,8 @@ export default defineConfig({
         // assert that the render tests don't already cover.
         "src/index.jsx",
       ],
-      // A floor, not a target. Measured on 2026-08-10 with `AuditLogs`
-      // covered: 80.31 statements / 93.27 branches / 64.21 functions /
-      // 80.31 lines.
+      // A floor, not a target. Measured on 2026-08-10 after the #82 fix:
+      // 80.46 statements / 93.33 branches / 64.21 functions / 80.46 lines.
       //
       // **Set just under measured, and verify the gate bites (#70).** These sit
       // ~0.4 under rather than the "few points" the original #27 gate used,

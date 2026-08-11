@@ -27,7 +27,7 @@ finished.
 |------|-------|
 | Backend tests | **581 passing**, `ruff` clean, **90.59%** coverage, gate **85** (#28) |
 | NL2SQL accuracy | **96.5%** (3 repeats, cache off); 6 of 8 categories at 100% |
-| Frontend tests | **177 passing**, 8 of 12 components covered; gate **80/93/64/80** (#27, #70) |
+| Frontend tests | **183 passing**, 8 of 12 components covered; gate **80/93/64/80** (#27, #70) |
 | Build/runtime | Vite build OK, Node 24 (LTS), dependency audit clean |
 | E2E | Runs in GitHub Actions ✅; passes on attempt 1 since PR #63 (#45 fixed) |
 | Migrations | Head is `b92c4d17ae03` (email verification, #21) |
@@ -83,7 +83,7 @@ finished.
 | Issue | What |
 |-------|------|
 | #70 | **`AuditLogs` covered** — third of the seven. 25 tests, component to **100%** on all four metrics, suite 152 → 177; overall coverage now **80.31%**. Gate **73/92/62/73 → 80/93/64/80**. 25 of 25 mutants killed. |
-| #82 | **Filed, not fixed.** A failed audit-log fetch renders as "No audit logs yet. Start asking questions!" — the page asserts the trail is empty when it simply failed to load, which for an *audit* trail is a wrong answer to the question the page exists to answer. Pinned by a characterization test rather than asserted as correct. |
+| #82 | **A failed audit-log fetch no longer reads as an empty trail.** The page said "No audit logs yet. Start asking questions!" when the request had simply failed — for an *audit* trail, a wrong answer to the question the page exists to answer. Found while writing #70's tests, filed rather than folded in, fixed the next PR. Hiding the stat tiles matters as much as the copy: "Total Queries 0" asserts emptiness just as plainly. Suite 177 → 183. |
 | #70 | **`AdminConsole` covered** — second of the seven, and the highest-risk one: the only place a person's action changes someone else's account. 36 tests, component to **100%** on all four metrics, suite 116 → 152. Gate **64/91/57/64 → 73/92/62/73**, verified to bite. 33 of 33 mutants killed, including "the owner row has a deactivate button" and "the toggle sends the current state instead of its inverse". |
 
 ### Shipped 2026-08-09
@@ -118,7 +118,7 @@ python3 -m pip_audit -r requirements.txt --strict   # --strict is what CI runs
 # Frontend (from frontend/)
 npm ci
 npm run build                           # outputs to build/
-npm test                                # expect 177 passed; enforces coverage thresholds
+npm test                                # expect 183 passed; enforces coverage thresholds
 npm audit --omit=dev                    # see the allowlist note in ci.yml
 ```
 
@@ -325,6 +325,21 @@ None are blocking, but they're the honest loose ends:
   to **delete the suite you just added and confirm `npm test` exits non-zero**
   before opening the PR. v8 coverage is deterministic, so tight thresholds do
   not flake.
+- ~~**A failed audit-log fetch reads as an empty trail (#82)**~~ — **fixed**
+  2026-08-10, the PR after the one that found it. `AuditLogs` caught its error,
+  did `setLogs([])` and surfaced nothing, so a 500 and a genuinely empty trail
+  both rendered "No audit logs yet. Start asking questions!".
+
+  **The copy was only half of it.** Fixing the sentence alone would have left
+  "Total Queries 0" on screen, which asserts an empty trail exactly as plainly,
+  so the stat tiles are hidden on failure too. The banner states outright that
+  no conclusion can be drawn — "we don't know" and "nothing happened" are
+  different answers and only one is true after a failed fetch — and carries
+  `role="alert"`, because it contradicts what the page would otherwise imply and
+  a screen-reader user must not be left with the empty reading.
+
+  **Generalisable:** when a load failure is the bug, audit everything on the
+  page that implies a count, not just the error message.
 - ~~**`Login` reports every failure as "Invalid credentials" (#77)**~~ —
   **fixed** 2026-08-09, immediately after the coverage PR that found it. Each of
   the backend's outcomes now reaches the user distinctly, and the
