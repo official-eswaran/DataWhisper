@@ -1,18 +1,23 @@
 {
- "recorded_at": "2026-08-08T00:00:00+00:00",
+ "recorded_at": "2026-08-12T00:00:00+00:00",
  "model": "llama3.2:3b",
  "repeat": 3,
  "cache_enabled": false,
- "hardware": "dev laptop, CPU inference",
- "accuracy": 96.5,
+ "hardware": "dev workstation, CPU inference",
+ "accuracy": 98.2,
  "floor": 80.0,
- "observed_range": "86.0 - 96.5 across all rounds recorded to date",
- "note": "The aggregate-threshold repair (#74). The cleanest attribution of any round so far: +3 attempts, all three of them the `having` category going 0/3 -> 3/3, and every other category identical to the previous round attempt-for-attempt. Unlike the #73 round there is no flaky-case contribution to subtract, so the full +1.8 points is the repair. Six categories now at 100%; the two remaining failures are #59 and #60, each 0/3.",
+ "observed_range": "86.0 - 98.2 across all rounds recorded to date",
+ "note": "The superlative repair (#59). `ranking` 21/24 -> 24/24: sales_cheapest_product went 0/3 to 3/3 and sales_most_expensive_product, the case a clumsy fix breaks, stayed 3/3. Seven of eight categories at 100%. READ THE ATTRIBUTION: this round scored +5 attempts over its control, and only +3 of them are the repair. The other +2 are sales_march_revenue, a known-flaky `date` case, landing 3/3 where the control got 1/3 — a category this repair cannot touch. So 98.2% is a real number for this code and 96.9% is the honest expectation, per the #73 lesson.",
+ "control": {
+  "accuracy": 95.3,
+  "recorded_at": "2026-08-12T00:00:00+00:00",
+  "note": "Same machine, same session, immediately before the repair landed — this is the number the 98.2 is a delta against, not the 96.5 below. Category-for-category it differs from the 96.5 round only in `date` (13/15 vs 15/15), which is the flaky pair, so the two rounds agree about the code."
+ },
  "previous": {
-  "accuracy": 94.7,
+  "accuracy": 96.5,
   "floor": 80.0,
-  "recorded_at": "2026-08-07T00:00:00+00:00",
-  "note": "After the missing-GROUP-BY repair (#73). having was 0/3."
+  "recorded_at": "2026-08-08T00:00:00+00:00",
+  "note": "After the aggregate-threshold repair (#74), on a different machine. having 0/3 -> 3/3."
  },
  "by_category": {
   "aggregate": {
@@ -44,22 +49,21 @@
    "total": 12
   },
   "ranking": {
-   "passed": 21,
+   "passed": 24,
    "total": 24
   }
  },
  "known_failures": {
-  "note": "Exactly two cases fail, each 0/3, and each has a named issue. Both turn on a semantic choice the SQL cannot reveal, and both have a failed prompt-fix attempt on record — read the 'Known gaps' section of PROJECT_STATUS.md before trying either again.",
+  "note": "One case now fails, 0/3, with a named issue. It turns on a semantic choice the phrasing cannot settle, and it has a failed prompt-fix attempt on record — read the 'Known gaps' section of PROJECT_STATUS.md before trying it again.",
   "always_failing": {
-   "sales_cheapest_product": "#59 — returns the measure, not the entity: SELECT MIN(price) instead of the product. A repair would have to guess which column is the entity; the AST does not carry it.",
-   "sales_laptop_units": "#60 — COUNT(CASE WHEN ...) counts orders (3) where SUM(quantity) was meant (11). Both readings of 'how many' are legitimate; only the schema breaks the tie."
+   "sales_laptop_units": "#60 — 'How many laptops were sold?' answered over rows rather than units. Emitted COUNT(CASE WHEN product = 'Laptop' THEN quantity END) (3 orders) in the control round and the bare SELECT quantity ... WHERE product = 'Laptop' in this one; the answer is SUM(quantity) = 11. Both readings of 'how many' are legitimate."
   },
   "non_deterministic": [
    "emp_joined_2021",
    "sales_march_revenue",
    "sales_electronics_by_region"
   ],
-  "flaky_note": "All three passed 3/3 this round and last, but emp_joined_2021 and sales_march_revenue were 2/3 two rounds ago (one invents an upper bound, one emits LIKE '%03-2024%'). Treat date as ~13-15/15, not a solid 15: a round where both fall the other way reads ~95.3% on this same code."
+  "flaky_note": "sales_march_revenue is the one to watch: 1/3 in the control round (LIKE '2024-03%', which does not bind) and 3/3 in this one, on identical date-handling code. That single case is worth 1.2 points of headline accuracy, which is why the note above separates it from the repair. Treat `date` as ~13-15/15."
  },
- "floor_rationale": "Still 80, and still deliberately. Three rounds now sit at 90.6, 94.7 and 96.5, but the spread between them is largely two flaky date cases, which is exactly the argument against moving a CI gate on a small number of samples. The floor's job is catching a category collapse, which 80 still does. Revisit once several rounds exist on unchanged code — and note that the lowest observed round (86.0) predates three of the four repairs, so the honest lower bound for *this* code has not been measured yet."
+ "floor_rationale": "Still 80, and still deliberately. Four rounds now sit at 90.6, 94.7, 96.5 and 98.2, and the spread between the last two is one flaky date case, which is the argument against moving a CI gate on this few samples. The floor's job is catching a category collapse, which 80 still does. Note also that the two most recent rounds are from different machines: the 95.3 control here is the same code as the 96.5 round above. The lowest observed round (86.0) predates four of the five repairs, so the honest lower bound for *this* code is still unmeasured."
 }

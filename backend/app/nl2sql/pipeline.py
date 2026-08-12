@@ -25,6 +25,7 @@ from app.nl2sql.sql_repair import (
     add_missing_group_keys,
     move_aggregate_threshold_to_having,
     repair_date_period_bounds,
+    replace_bare_extreme_with_ranked_row,
 )
 from app.nl2sql.sql_validator import validate_and_fix_sql, validate_sql
 
@@ -143,6 +144,12 @@ class NL2SQLPipeline:
         # aggregate in the projection, which is exactly the shape neither of
         # them leaves behind.
         generated_sql = move_aggregate_threshold_to_having(
+            generated_sql, user_question, self.conn
+        )
+        # A superlative answered with the bare measure (#59). Requires a MIN/MAX
+        # projection and no grouping, which is neither what #73 leaves behind
+        # nor what #74 acts on, so the order is immaterial.
+        generated_sql = replace_bare_extreme_with_ranked_row(
             generated_sql, user_question, self.conn
         )
 
