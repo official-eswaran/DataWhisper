@@ -25,8 +25,8 @@ finished.
 
 | Area | State |
 |------|-------|
-| Backend tests | **632 passing**, `ruff` clean, **90.59%** coverage, gate **85** (#28) |
-| NL2SQL accuracy | **98.2%** (3 repeats, cache off); 7 of 8 categories at 100% |
+| Backend tests | **663 passing**, `ruff` clean, **90.59%** coverage, gate **85** (#28) |
+| NL2SQL accuracy | **98.2%** (3 repeats, cache off); 6 of 8 at 100%, no case failing every run |
 | Frontend tests | **233 passing**, 10 of 12 components covered; gate **88/94/68/88** (#27, #70) |
 | Build/runtime | Vite build OK, Node 24 (LTS), dependency audit clean |
 | E2E | Runs in GitHub Actions ✅; passes on attempt 1 since PR #63 (#45 fixed) |
@@ -74,6 +74,7 @@ finished.
 
 | Issue | What |
 |-------|------|
+| #60 | **Units-vs-rows repair.** `filter` 30/33 → **33/33**; `sales_laptop_units` 0/3 → 3/3. Seventh deterministic repair, and the last eval case that failed every run. **The headline stayed at 98.2%** — the +3 attempts were offset by two flaky cases losing 3 between them, neither reachable by this repair. `sales_order_count` and `sales_total_quantity`, the two a clumsy fix breaks, stayed 3/3. |
 | #59 | **Superlative repair.** `ranking` 21/24 → **24/24**; `sales_cheapest_product` 0/3 → 3/3 with `sales_most_expensive_product` — the case a clumsy fix breaks — still 3/3. Sixth deterministic repair, and the first to overturn a "not derivable" verdict recorded in this file. **Read the attribution:** the round measured 98.2% against a 95.3% control taken on the same machine minutes earlier, but only +3 of the +5 attempts are the repair; the other +2 are the flaky `sales_march_revenue` landing 3/3 where the control got 1/3. |
 
 ### Shipped 2026-08-08
@@ -82,7 +83,7 @@ finished.
 |-------|------|
 | #74 | **Aggregate-threshold repair.** `having` 0/3 → **3/3** — the last category at zero. Overall 94.7% → **96.5%**, with every other category unmoved attempt-for-attempt. Fifth deterministic repair. The "which aggregate?" guess is handled by declining on any non-SUM vocabulary; the "is this even an aggregate threshold?" question turned out to be answerable from the *data* (does the projected column repeat?) rather than the phrasing. See "Known gaps". |
 | — | **Both query paths now provably apply the same repairs.** #74 was first wired into `pipeline.py` only — the eval would have scored it green while every real user, who goes through the SSE stream in `query.py`, still saw the bug. `test_sql_repair.py` now asserts the two call sites match, structurally, so the next repair is covered the day it is written. |
-| #59, #60 | **Attempted, measured, reverted — still open.** See the note below. |
+| #59, #60 | **Attempted, measured, reverted — still open.** See the note below. (Both fixed 2026-08-12, as rewrites rather than prompt rules.) |
 
 ### Shipped 2026-08-11
 
@@ -124,7 +125,7 @@ finished.
 ```bash
 # Backend (from backend/)
 export SECRET_KEY=$(python3 -c 'import secrets;print(secrets.token_hex(32))') DEBUG=true
-python3 -m pytest                       # expect 632 passed
+python3 -m pytest                       # expect 663 passed
 python3 -m ruff check app tests evals   # expect clean
 python3 -m pip_audit -r requirements.txt --strict   # --strict is what CI runs
 
@@ -378,11 +379,11 @@ None are blocking, but they're the honest loose ends:
 - ~~**PDF export truncates every field at 60 characters (#46)**~~ — fixed
   2026-08-03 (PR #51): cells wrap as ReportLab `Paragraph`s, with a 4000-char
   runaway guard in place of the 60-char cap.
-- **One of the four eval-found defects remains (#60).** #61 was fixed
-  2026-08-04, #58 on 2026-08-06 (`distinct` 60% → **100%**) and ~~#59~~ on
-  2026-08-12 (`ranking` 87.5% → **100%**), all three deterministic. **Both #59
-  and #60 have a failed prompt attempt on record** — read this before trying
-  #60 again:
+- ~~**Four eval-found defects (#58, #59, #60, #61)**~~ — **all fixed**, the last
+  two on 2026-08-12 (`ranking` 87.5% → **100%**, `filter` 90.9% → **100%**).
+  **#59 and #60 each have a failed prompt attempt on record**, and it is the
+  attempt each issue recommends — kept here because the next accuracy defect
+  will come with the same recommendation:
   - **#59** (superlatives return the measure): the recommended rule naming the
     superlative vocabulary took `ranking` from **87.5% to 62.5%**. The 3B model
     copied the concrete example verbatim, including its `ASC` direction on a
@@ -392,7 +393,7 @@ None are blocking, but they're the honest loose ends:
   - **#60** (units vs orders): the recommended rule *did* fix its own case —
     `filter` 91% → 100% — but cost `ranking` 87.5% → 75%, for an identical
     93/99 across the three categories either way. It moves failures rather than
-    removing them. Reverted.
+    removing them. Reverted — and then fixed as a rewrite, see below.
 
   **This is the third confirmation of the #52 lesson, and the sharpest**: a rule
   that provably fixes its target case can still be not worth shipping. Compare
@@ -419,6 +420,35 @@ None are blocking, but they're the honest loose ends:
   the highest total revenue?" ranks per-region sums, and the row holding the
   single largest order is a different and plausible answer. That is #74's
   shape, and guessing between them would be worse than leaving it.
+
+  **It also declines on "who".** `emp_best_performer` ("Who has the best
+  performance score?") produced the bare `MAX` twice in the round after this
+  landed — the identical defect — and the repair left it alone, because "who"
+  names no column and `emp_name` would have to be guessed. That case is now
+  flaky rather than fixed. Widening the trigger to "who" means picking an entity
+  column out of the schema, which is the guess the issue warned about; the
+  narrow version is the one that measured well.
+- ~~**"How many X?" counts rows instead of summing units (#60)**~~ — **fixed**
+  2026-08-12. `filter` 30/33 → **33/33**; `sales_laptop_units` was the last case
+  in the set failing every run.
+
+  **The ambiguity is real and the repair does not resolve it — the model
+  already had.** "How many laptops" can mean units or orders, and no rule
+  decides that from the phrasing, which is what sank the prompt attempt. But
+  `COUNT(CASE WHEN product = 'Laptop' THEN quantity END)` *selects the quantity
+  column and then discards its values*; nobody writes that to count rows, which
+  is `COUNT(*)`. So the repair changes the aggregate to match the column the
+  model reached for, and never touches a `COUNT(*)` — which is why "How many
+  orders are there?" (3/3) is out of its reach by construction.
+
+  The trigger also requires the question's noun to be the value the query
+  filters on ("how many **laptops**" against `product = 'Laptop'`), so what is
+  being counted is an entity in the data rather than a row of the table.
+
+  **The headline did not move: 98.2% before and after.** +3 attempts from this
+  repair, −3 from two flaky cases in categories it cannot reach. That is the
+  clearest illustration yet of why `baseline.json` records category tables —
+  read as a headline, this round says the repair did nothing.
 - ~~**Date handling is the largest accuracy gap (#69)**~~ and ~~**per-group
   questions answered with one scalar (#73)**~~ — both **fixed**. `date` 7/15 →
   13-15/15, `group_by` 22/27 → **27/27**. Overall **94.7%**, five categories at
@@ -468,12 +498,14 @@ None are blocking, but they're the honest loose ends:
   entity and the schema confirms it — not in the table. The prediction was right
   that a re-examination was owed and wrong about where it would land, which is a
   better argument for doing it than the one made here.
-- **One case now fails, 0/3, with an issue.** #60 (units vs orders). It turns on
-  a semantic choice, it has a **failed, measured, reverted attempt on record**,
-  and that attempt fixed its own case while costing `ranking` 12.5 points — so
-  "I made the target case pass" is not evidence of anything. Read the note above
-  before it. #59, its twin in this paragraph for four rounds, went the other way
-  once someone re-read where its answer could come from.
+- **No case fails every run any more, and every remaining failure is model
+  non-determinism** — `emp_best_performer`, `sales_march_revenue`,
+  `emp_joined_2021`, `sales_electronics_by_region`. That is a first for this
+  eval, and it changes what a red run means: there is no longer a known-bad case
+  to attribute one to, so treat any repeat failure as new. It also means the
+  next accuracy work is either a new case set (the two datasets are small — see
+  "Limitations" in `evals/README.md`) or the flaky four, which are a model
+  problem rather than a repair-shaped one.
 - ~~**Nothing watches for EOL runtimes (#47)**~~ — **fixed** 2026-08-06.
   `eol-watch.yml` runs monthly against `endoflife.date` and opens/updates one
   rolling issue. It parses the pins out of the real files rather than
@@ -557,13 +589,11 @@ someone provisions something. That is the honest state of the project.
 9. ~~PDF export truncation (#46)~~ — done 2026-08-03.
 10. ~~EOL-runtime watch (#47)~~ — done 2026-08-06.
 11. ~~Accuracy: #69 (dates)~~, ~~#73 (per-group)~~, ~~#74 (HAVING)~~,
-    ~~#59 (superlatives)~~ — all done. Accuracy is **98.2%** and seven of eight
-    categories are at 100%.
-    **#60 remains, and has a failed attempt on record** — read the note in
-    "Known gaps" before touching it; the prompt fix the issue recommends is the
-    one that was tried and reverted. Six deterministic repairs have now landed
-    (#52, #58, #69, #73, #74, #59) and every prompt edit attempted has been
-    reverted; that is the pattern to plan around.
+    ~~#59 (superlatives)~~, ~~#60 (units vs rows)~~ — **all done**. Accuracy is
+    **98.2%**, six of eight categories are at 100%, and no case fails every run.
+    Seven deterministic repairs have now landed (#52, #58, #69, #73, #74, #59,
+    #60) and **every prompt edit attempted has been reverted** — that is the
+    pattern to plan around when the next defect turns up.
 12. Billing feature gaps — proration, dunning, invoices (#31). Explicitly
     post-launch; **do not start before #19** proves the money path.
 

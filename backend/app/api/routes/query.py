@@ -43,6 +43,7 @@ from app.nl2sql.sql_repair import (
     move_aggregate_threshold_to_having,
     repair_date_period_bounds,
     replace_bare_extreme_with_ranked_row,
+    sum_the_measure_a_count_discarded,
 )
 from app.nl2sql.sql_validator import validate_sql
 
@@ -270,6 +271,12 @@ async def ask_question_stream(
             # MIN/MAX projection and no grouping, which is neither what #73
             # leaves behind nor what #74 acts on, so the order is immaterial.
             generated_sql = replace_bare_extreme_with_ranked_row(
+                generated_sql, req.question, conn
+            )
+            # A "how many X?" answered over rows rather than units (#60).
+            # Requires a COUNT (or a bare column) that none of the four above
+            # leave behind.
+            generated_sql = sum_the_measure_a_count_discarded(
                 generated_sql, req.question, conn
             )
 

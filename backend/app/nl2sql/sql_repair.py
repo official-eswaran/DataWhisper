@@ -1148,3 +1148,242 @@ def replace_bare_extreme_with_ranked_row(sql: str, question: str, conn) -> str:
 
     logger.info("Turned a bare MIN/MAX into the ranked row the question asked for")
     return repaired
+
+
+# ── "How many X?" counts rows instead of summing the measure (issue #60) ──────
+#
+#   "How many laptops were sold?"
+#     -> SELECT COUNT(CASE WHEN product = 'Laptop' THEN quantity END) FROM sales_data
+#     want SELECT SUM(quantity) FROM sales_data WHERE product = 'Laptop'
+#
+# The first returns 3 — the number of laptop *orders*. The answer is 11 units.
+# A silently wrong number in a plausible range is the worst failure this product
+# has: nothing about "3" signals that it counted orders, and someone acting on
+# it under-counts stock by 8. It generalises past the sample data too, since any
+# table with one row per order and a quantity column carries the same ambiguity.
+#
+# ## The ambiguity is real, and the model has already resolved it
+#
+# "How many laptops" can mean units or orders, and the issue is right that no
+# rule decides that from the phrasing. But it does not have to be decided here:
+# the model **reached for the quantity column**. `COUNT(CASE WHEN … THEN
+# quantity END)` counts non-null quantities, so the values it selected are
+# discarded — nobody writes that meaning to count rows, which is `COUNT(*)` or
+# `COUNT(CASE WHEN … THEN 1 END)`, and both are left alone here. The repair does
+# not pick a reading; it makes the SQL express the reading the model picked.
+#
+# That is what keeps "How many orders are there?" (3/3 today) out of reach: it
+# produces `COUNT(*)`, which has no measure to sum.
+#
+# ## What the trigger checks
+#
+# The question's noun has to be the value the query filters on — "how many
+# **laptops**" against `product = 'Laptop'`. So the thing being counted is an
+# entity in the data, not a row of the table, and the measure column says how
+# many of it each row carries. A question whose noun matches no literal in its
+# own filter is not this defect.
+#
+# The second observed form (`SELECT quantity FROM sales_data WHERE product =
+# 'Laptop'`, 1 run in 3) is the same defect with the aggregate missing
+# altogether, and is repaired the same way.
+
+# "how many laptops were sold". The lookahead is the guard that matters: in
+# "how many Electronics orders were placed" the noun after "how many" is
+# followed by the real head noun, and counting rows is right there. Requiring a
+# verb, preposition or the end of the clause keeps that phrasing out.
+_HOW_MANY_THING = re.compile(
+    r"\bhow\s+many\s+(?P<thing>[a-z_]+)\b"
+    r"(?=\s+(?:were|was|are|is|has|have|had|did|do|does|"
+    r"sold|ordered|purchased|bought|shipped|"
+    r"in|from|on|at|by|during|for|with)\b|\s*[?.,]|\s*$)"
+)
+
+
+def _equality_literals(node, out: set) -> None:
+    """Every string literal the statement tests a column for equality against."""
+    if isinstance(node, list):
+        for item in node:
+            _equality_literals(item, out)
+        return
+    if not isinstance(node, dict):
+        return
+    if node.get("class") == "COMPARISON" and node.get("type") == _EQUAL:
+        left, right = node.get("left") or {}, node.get("right") or {}
+        for column_side, constant_side in ((left, right), (right, left)):
+            if column_side.get("class") != _COLUMN_REF:
+                continue
+            value = (constant_side.get("value") or {}).get("value")
+            if isinstance(value, str):
+                out.add(value.casefold())
+    for value in node.values():
+        _equality_literals(value, out)
+
+
+def _counts_an_entity_in_the_data(question: str, literals: set) -> bool:
+    """True when the question counts the very value the query filters on."""
+    for m in _HOW_MANY_THING.finditer(question.casefold()):
+        if any(form in literals for form in _singular_plural_forms(m.group("thing"))):
+            return True
+    return False
+
+
+def _measure_of_count(node: dict) -> dict | None:
+    """The bare column a COUNT is discarding, if that is what this node is.
+
+    ``COUNT(quantity)`` and ``COUNT(CASE WHEN … THEN quantity END)`` both hold a
+    measure whose values the count throws away. ``COUNT(*)`` and
+    ``COUNT(CASE WHEN … THEN 1 END)`` hold none, and mean rows.
+    """
+    if node.get("class") != "FUNCTION":
+        return None
+    if str(node.get("function_name", "")).casefold() != "count":
+        return None
+    if node.get("distinct") or node.get("filter"):
+        return None
+    children = node.get("children") or []
+    if len(children) != 1:
+        return None
+    child = children[0]
+    if _bare_column_name(child) is not None:
+        return child
+    if child.get("class") == "CASE":
+        checks = child.get("case_checks") or []
+        if len(checks) != 1:
+            return None
+        then_expr = checks[0].get("then_expr") or {}
+        if _bare_column_name(then_expr) is not None:
+            return then_expr
+    return None
+
+
+def _sum_of(expression: dict) -> dict:
+    return {
+        "class": "FUNCTION",
+        "type": "FUNCTION",
+        "alias": "",
+        "query_location": 0,
+        "function_name": "sum",
+        "schema": "",
+        "children": [json.loads(json.dumps(expression))],
+        "filter": None,
+        "order_bys": {"type": "ORDER_MODIFIER", "orders": []},
+        "distinct": False,
+        "is_operator": False,
+        "export_state": False,
+        "catalog": "",
+    }
+
+
+def sum_the_measure_a_count_discarded(sql: str, question: str, conn) -> str:
+    """Sum the quantity column a "how many X?" query counted rows of (#60).
+
+    ``SELECT COUNT(CASE WHEN product = 'Laptop' THEN quantity END)`` becomes
+    ``SELECT SUM(CASE WHEN product = 'Laptop' THEN quantity END)``, and a bare
+    ``SELECT quantity … WHERE product = 'Laptop'`` becomes ``SELECT
+    SUM(quantity) …``.
+
+    Fires only when the question counts a value the query itself filters on, the
+    projection is exactly one COUNT over a measure column (or that column
+    unaggregated), and the column repeats across rows. Returns the input
+    unchanged for anything else. Never raises.
+    """
+    # Fast path only, and deliberately redundant: the same pattern decides for
+    # real once the filter's literals are known. Every question that is not a
+    # "how many X" — the overwhelming majority — skips the parse.
+    if not _HOW_MANY_THING.search(question.casefold()):
+        return sql
+
+    try:
+        serialized = conn.execute("SELECT json_serialize_sql(?::VARCHAR)", [sql]).fetchone()[0]
+        payload = json.loads(serialized)
+    except Exception as exc:  # noqa: BLE001 — repair is best-effort by design
+        logger.debug("units repair: could not parse SQL (%s)", exc)
+        return sql
+
+    if payload.get("error"):
+        return sql
+    statements = payload.get("statements") or []
+    if len(statements) != 1:
+        return sql
+    node = statements[0].get("node") or {}
+
+    if node.get("type") != _SELECT_NODE:
+        return sql
+    # A grouped query answers per group and a limited one is already truncated;
+    # either way the model expressed something this would overwrite.
+    if node.get("group_expressions") or node.get("having"):
+        return sql
+    if node.get("modifiers") or node.get("qualify") or node.get("sample"):
+        return sql
+    if node.get("aggregate_handling") not in (None, "STANDARD_HANDLING"):
+        return sql
+
+    from_table = node.get("from_table") or {}
+    if from_table.get("type") != "BASE_TABLE":
+        return sql
+    table = from_table.get("table_name")
+    if not table:
+        return sql
+
+    select_list = node.get("select_list") or []
+    if len(select_list) != 1:
+        return sql
+
+    literals: set[str] = set()
+    _equality_literals(statements[0], literals)
+    if not _counts_an_entity_in_the_data(question, literals):
+        return sql
+
+    projection = select_list[0]
+    measure_node = _measure_of_count(projection)
+    if measure_node is not None:
+        # COUNT(x) -> SUM(x): the CASE, if there is one, is already right.
+        replacement = json.loads(json.dumps(projection))
+        replacement["function_name"] = "sum"
+    elif _bare_column_name(projection) is not None:
+        # The aggregate went missing entirely — the raw column for every
+        # matching row where one number was asked for.
+        measure_node = projection
+        replacement = _sum_of(projection)
+    else:
+        return sql
+
+    measure = _bare_column_name(measure_node)
+    by_folded = {c.casefold(): c for c in _table_columns(conn, table)}
+    measure_column = by_folded.get(measure.casefold())
+    if measure_column is None:
+        return sql
+    # A column whose every value is distinct identifies the row rather than
+    # measuring it, and summing identifiers means nothing. The same cardinality
+    # question #74 asks, for the same reason.
+    if not _repeats_across_rows(conn, table, measure_column):
+        return sql
+
+    node["select_list"] = [replacement]
+
+    try:
+        repaired = conn.execute(
+            "SELECT json_deserialize_sql(?::JSON)", [json.dumps(payload)]
+        ).fetchone()[0]
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("units repair: could not rebuild SQL (%s)", exc)
+        return sql
+
+    if not repaired or not isinstance(repaired, str):
+        return sql
+
+    # SUM over a non-numeric column does not bind where COUNT did, so this gate
+    # is what keeps a text column from being summed.
+    try:
+        conn.execute(f"EXPLAIN {repaired}")
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("units repair: rewrite does not bind (%s)", exc)
+        return sql
+
+    from app.nl2sql.sql_validator import is_safe_sql
+
+    if not is_safe_sql(repaired):
+        return sql
+
+    logger.info("Summed the measure a row count was discarding")
+    return repaired
