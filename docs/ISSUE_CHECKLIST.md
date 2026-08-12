@@ -194,12 +194,13 @@ against a deliberately stale pin before trusting it.
 - [x] **#58** — merged 2026-08-06: `distinct` 60% → **100%**
 - [x] **#59** — merged 2026-08-12: `ranking` 87.5% → **100%**. The prompt route
       was the attempt that failed; the rewrite is in 7f below.
-- [ ] **#60** — attempted, measured, **reverted**. Still open.
+- [x] **#60** — merged 2026-08-12: `filter` 90.9% → **100%**. The prompt route
+      was the attempt that failed; the rewrite is in 7g below.
 
 | issue | defect | severity | state |
 |---|---|---|---|
 | #61 | Dates are `TIMESTAMP_NS`, model emits `LIKE '2021%'` — **and the self-heal never runs for bind errors** | P1 | fixed |
-| #60 | "How many laptops sold" counts orders (3) instead of summing units (11) | P2 | **open** |
+| #60 | "How many laptops sold" counts orders (3) instead of summing units (11) | P2 | fixed |
 | #59 | "Which product is cheapest" returns the price, not the product | P2 | fixed |
 | #58 | "List all the regions" omits `DISTINCT` — 25 rows instead of 4 | P2 | fixed |
 
@@ -240,9 +241,10 @@ rather than the headline, which is noisy enough (86.0–91.2 observed) to hide a
 12-point category swing.
 
 **Do not** re-attempt either of these with another prompt edit without reading
-the two rows above first. #59 shipped on 2026-08-12 as a rewrite instead (7f);
-#60 is still open and the row above is still the last word on the prompt route
-for it.
+the two rows above first. Both shipped on 2026-08-12 as rewrites instead (7f,
+7g), and the two rows remain the last word on the prompt route for them —
+whichever accuracy defect turns up next will arrive recommending the same
+thing.
 
 **#61 is the one to read first.** Half of it is not an accuracy bug at all: the
 self-heal path in `pipeline.py` is unreachable for the failure it was written to
@@ -352,6 +354,37 @@ explicitly; they are what a clumsy fix breaks.
   no `table_name` to SUBQUERY/JOIN/TABLE_FUNCTION sources, so the next guard
   already declines) and the closing `is_safe_sql` re-check, which the four
   repairs before it also keep on the same reasoning.
+
+### 7g. `#60` — "How many X?" counts rows instead of summing units (P2)
+
+- [x] **Merged** — 2026-08-12. `filter` 30/33 → **33/33**, seventh
+  deterministic repair (`sum_the_measure_a_count_discarded`).
+  `sales_laptop_units` was the last case in the set failing every run.
+
+  **The headline did not move — 98.2% before and after — and the repair still
+  worked.** +3 attempts from it, −3 from two flaky cases in categories it cannot
+  reach (`sales_march_revenue` 3/3 → 2/3, `emp_best_performer` 3/3 → 1/3). This
+  is the sharpest argument yet for the rule in 7a: compare category totals, not
+  the headline. Read as a headline this round says nothing happened.
+
+  **How a rule was avoided for a genuinely ambiguous question.** "How many
+  laptops" can mean units or orders; the issue is right that no phrasing rule
+  settles it. It does not have to be settled here, because the model already
+  did: `COUNT(CASE WHEN product = 'Laptop' THEN quantity END)` selects the
+  quantity column and throws its values away. Nobody writes that to count rows —
+  that is `COUNT(*)`, which this never touches, which is why
+  `sales_order_count` (3/3) is out of reach by construction. The repair makes
+  the SQL express the reading the model chose.
+
+  The trigger additionally requires the question's noun to be the value the
+  query filters on — "how many **laptops**" against `product = 'Laptop'` — so
+  the thing counted is an entity in the data rather than a row of the table.
+  `sales_total_quantity` ("How many units were sold in total?", 3/3) has no such
+  filter and is deliberately left alone even though it is the same mistake:
+  widening to catch it would cost the guard that keeps row counts safe.
+
+  31 tests (`tests/test_units_repair.py`), 20 of 20 mutants killed after two
+  rounds — the first round left three alive and each produced a real test.
 
 ### 7c. `#70` — Seven frontend components still untested (P2)
 

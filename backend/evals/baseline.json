@@ -7,11 +7,15 @@
  "accuracy": 98.2,
  "floor": 80.0,
  "observed_range": "86.0 - 98.2 across all rounds recorded to date",
- "note": "The superlative repair (#59). `ranking` 21/24 -> 24/24: sales_cheapest_product went 0/3 to 3/3 and sales_most_expensive_product, the case a clumsy fix breaks, stayed 3/3. Seven of eight categories at 100%. READ THE ATTRIBUTION: this round scored +5 attempts over its control, and only +3 of them are the repair. The other +2 are sales_march_revenue, a known-flaky `date` case, landing 3/3 where the control got 1/3 — a category this repair cannot touch. So 98.2% is a real number for this code and 96.9% is the honest expectation, per the #73 lesson.",
+ "note": "The units-vs-rows repair (#60), on top of the superlative repair (#59) recorded below. `filter` 30/33 -> 33/33: sales_laptop_units, the last case failing every run, went 0/3 to 3/3. Six of the eight categories are at 100% and every remaining failure is model non-determinism rather than a defect with an issue — the first round of which that is true. READ THE ATTRIBUTION: the headline did not move, because +3 attempts from this repair were offset by -3 from two flaky cases (see flaky_note). Neither repair can touch either of them.",
  "control": {
   "accuracy": 95.3,
   "recorded_at": "2026-08-12T00:00:00+00:00",
-  "note": "Same machine, same session, immediately before the repair landed — this is the number the 98.2 is a delta against, not the 96.5 below. Category-for-category it differs from the 96.5 round only in `date` (13/15 vs 15/15), which is the flaky pair, so the two rounds agree about the code."
+  "note": "Same machine, same session, before either repair. filter 30/33, ranking 21/24, date 13/15. This is the number both repairs are a delta against, not the 96.5 from 2026-08-08, which was a different machine.",
+  "after_59_only": {
+   "accuracy": 98.2,
+   "note": "ranking 21/24 -> 24/24 (+3, the repair) and date 13/15 -> 15/15 (+2, flaky). filter still 30/33."
+  }
  },
  "previous": {
   "accuracy": 96.5,
@@ -25,7 +29,7 @@
    "total": 42
   },
   "date": {
-   "passed": 15,
+   "passed": 14,
    "total": 15
   },
   "distinct": {
@@ -33,7 +37,7 @@
    "total": 15
   },
   "filter": {
-   "passed": 30,
+   "passed": 33,
    "total": 33
   },
   "group_by": {
@@ -49,21 +53,20 @@
    "total": 12
   },
   "ranking": {
-   "passed": 24,
+   "passed": 22,
    "total": 24
   }
  },
  "known_failures": {
-  "note": "One case now fails, 0/3, with a named issue. It turns on a semantic choice the phrasing cannot settle, and it has a failed prompt-fix attempt on record — read the 'Known gaps' section of PROJECT_STATUS.md before trying it again.",
-  "always_failing": {
-   "sales_laptop_units": "#60 — 'How many laptops were sold?' answered over rows rather than units. Emitted COUNT(CASE WHEN product = 'Laptop' THEN quantity END) (3 orders) in the control round and the bare SELECT quantity ... WHERE product = 'Laptop' in this one; the answer is SUM(quantity) = 11. Both readings of 'how many' are legitimate."
-  },
+  "note": "No case fails every run any more, and no failing case has an open issue behind it. What is left is the model landing differently between rounds; see non_deterministic.",
+  "always_failing": {},
   "non_deterministic": [
+   "emp_best_performer",
    "emp_joined_2021",
    "sales_march_revenue",
    "sales_electronics_by_region"
   ],
-  "flaky_note": "sales_march_revenue is the one to watch: 1/3 in the control round (LIKE '2024-03%', which does not bind) and 3/3 in this one, on identical date-handling code. That single case is worth 1.2 points of headline accuracy, which is why the note above separates it from the repair. Treat `date` as ~13-15/15."
+  "flaky_note": "The two that moved this round, and neither is reachable by the repairs that landed with it. sales_march_revenue: 1/3 in the control, 3/3 with #59, 2/3 here, emitting LIKE '%03-2024%' when it fails — worth 0.6 points per attempt. emp_best_performer: 3/3 in both earlier rounds, 1/3 here, emitting SELECT MAX(performance_score) for 'Who has the best performance score?'. That is #59's defect shape exactly, and #59's repair declines on it by design: 'who' does not name the entity column, and emp_name would have to be guessed. Treat `ranking` as 22-24/24 and `date` as 13-15/15."
  },
- "floor_rationale": "Still 80, and still deliberately. Four rounds now sit at 90.6, 94.7, 96.5 and 98.2, and the spread between the last two is one flaky date case, which is the argument against moving a CI gate on this few samples. The floor's job is catching a category collapse, which 80 still does. Note also that the two most recent rounds are from different machines: the 95.3 control here is the same code as the 96.5 round above. The lowest observed round (86.0) predates four of the five repairs, so the honest lower bound for *this* code is still unmeasured."
+ "floor_rationale": "Still 80, and still deliberately. Rounds now sit at 90.6, 94.7, 96.5, 98.2 and 98.2, but the last two are identical headlines over different category tables, which is the argument against moving a CI gate on this few samples in one sentence. The floor's job is catching a category collapse, which 80 still does. The lowest observed round (86.0) predates most of the seven repairs, so the honest lower bound for *this* code is still unmeasured."
 }
