@@ -27,7 +27,7 @@ finished.
 |------|-------|
 | Backend tests | **581 passing**, `ruff` clean, **90.59%** coverage, gate **85** (#28) |
 | NL2SQL accuracy | **96.5%** (3 repeats, cache off); 6 of 8 categories at 100% |
-| Frontend tests | **209 passing**, 9 of 12 components covered; gate **85/93/66/85** (#27, #70) |
+| Frontend tests | **233 passing**, 10 of 12 components covered; gate **88/94/68/88** (#27, #70) |
 | Build/runtime | Vite build OK, Node 24 (LTS), dependency audit clean |
 | E2E | Runs in GitHub Actions ✅; passes on attempt 1 since PR #63 (#45 fixed) |
 | Migrations | Head is `b92c4d17ae03` (email verification, #21) |
@@ -82,6 +82,7 @@ finished.
 
 | Issue | What |
 |-------|------|
+| #70 | **`Dashboard` covered** — fifth of the seven. The composition root: tab routing, the upload→chat hand-off, and the Stripe return path. 24 tests, component to **100%** on all four metrics, suite 209 → 233; overall **88.59%**. Gate **85/93/66/85 → 88/94/68/88**. 21 of 22 mutants killed; the survivor is documented redundancy (stripping the `?status=` marker, not the effect's empty dep array, is what stops the toast replaying). |
 | #70 | **`AccountSettings` covered** — fourth of the seven, and the last of the destructive ones: GDPR export, account deletion, and the only control in the product that deletes an entire organization. 26 tests, component to **100%** on all four metrics, suite 183 → 209; overall **85.43%**. Gate **80/93/64/80 → 85/93/66/85**. 21 of 21 mutants killed, including both `window.confirm` gates and "the org control is shown to everyone". |
 
 ### Shipped 2026-08-10
@@ -124,7 +125,7 @@ python3 -m pip_audit -r requirements.txt --strict   # --strict is what CI runs
 # Frontend (from frontend/)
 npm ci
 npm run build                           # outputs to build/
-npm test                                # expect 209 passed; enforces coverage thresholds
+npm test                                # expect 233 passed; enforces coverage thresholds
 npm audit --omit=dev                    # see the allowlist note in ci.yml
 ```
 
@@ -318,11 +319,11 @@ None are blocking, but they're the honest loose ends:
   below the truth.
 
   **`Login` 2026-08-09**, **`AdminConsole` and `AuditLogs` 2026-08-10**,
-  **`AccountSettings` 2026-08-11** (#70) — all four to 100% on all four metrics;
-  suite 94 → 209, overall coverage 63.72% → **85.43%**. **Three remain**:
-  `Dashboard`, `Sidebar`, `ErrorBoundary`. One per PR, and they are the light
-  ones — everything touching accounts, audit data or destructive actions is
-  now covered.
+  **`AccountSettings` and `Dashboard` 2026-08-11** (#70) — all five to 100% on
+  all four metrics; suite 94 → 233, overall coverage 63.72% → **88.59%**.
+  **Two remain**: `Sidebar` and `ErrorBoundary` (the latter already sits at
+  94% incidentally). Everything touching accounts, audit data, destructive
+  actions or the Stripe return path is now covered.
 
   **A raised gate is not automatically a ratchet, and this one wasn't.** Raising
   the thresholds by the original "a few points under measured" rule left the
