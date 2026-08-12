@@ -1,6 +1,6 @@
 # Project status & how to resume
 
-**Last updated:** 2026-08-09
+**Last updated:** 2026-08-12
 **Branch of record:** `main`.
 
 > ⚠️ **`master` is not the branch of record and does not exist on the remote.**
@@ -25,8 +25,8 @@ finished.
 
 | Area | State |
 |------|-------|
-| Backend tests | **581 passing**, `ruff` clean, **90.59%** coverage, gate **85** (#28) |
-| NL2SQL accuracy | **96.5%** (3 repeats, cache off); 6 of 8 categories at 100% |
+| Backend tests | **632 passing**, `ruff` clean, **90.59%** coverage, gate **85** (#28) |
+| NL2SQL accuracy | **98.2%** (3 repeats, cache off); 7 of 8 categories at 100% |
 | Frontend tests | **233 passing**, 10 of 12 components covered; gate **88/94/68/88** (#27, #70) |
 | Build/runtime | Vite build OK, Node 24 (LTS), dependency audit clean |
 | E2E | Runs in GitHub Actions ✅; passes on attempt 1 since PR #63 (#45 fixed) |
@@ -69,6 +69,12 @@ finished.
 | #58 | **DISTINCT repair.** `distinct` 60% → **100%**, deterministic. |
 | #69 | **Date period repair.** `date` 7/15 → **13/15**; overall 87.1% → **90.6%** with no other category moving. |
 | #73 | **Missing-GROUP-BY repair.** `group_by` 22/27 → **27/27**; overall **94.7%**. Five categories now at 100%. |
+
+### Shipped 2026-08-12
+
+| Issue | What |
+|-------|------|
+| #59 | **Superlative repair.** `ranking` 21/24 → **24/24**; `sales_cheapest_product` 0/3 → 3/3 with `sales_most_expensive_product` — the case a clumsy fix breaks — still 3/3. Sixth deterministic repair, and the first to overturn a "not derivable" verdict recorded in this file. **Read the attribution:** the round measured 98.2% against a 95.3% control taken on the same machine minutes earlier, but only +3 of the +5 attempts are the repair; the other +2 are the flaky `sales_march_revenue` landing 3/3 where the control got 1/3. |
 
 ### Shipped 2026-08-08
 
@@ -118,7 +124,7 @@ finished.
 ```bash
 # Backend (from backend/)
 export SECRET_KEY=$(python3 -c 'import secrets;print(secrets.token_hex(32))') DEBUG=true
-python3 -m pytest                       # expect 581 passed
+python3 -m pytest                       # expect 632 passed
 python3 -m ruff check app tests evals   # expect clean
 python3 -m pip_audit -r requirements.txt --strict   # --strict is what CI runs
 
@@ -372,15 +378,17 @@ None are blocking, but they're the honest loose ends:
 - ~~**PDF export truncates every field at 60 characters (#46)**~~ — fixed
   2026-08-03 (PR #51): cells wrap as ReportLab `Paragraph`s, with a 4000-char
   runaway guard in place of the 60-char cap.
-- **Two of the four eval-found defects remain (#59, #60).** #61 was fixed
-  2026-08-04 and #58 on 2026-08-06 (`distinct` 60% → **100%**, deterministic
-  repair). #59 and #60 are still open **and both have a failed attempt on
-  record** — read this before trying again:
+- **One of the four eval-found defects remains (#60).** #61 was fixed
+  2026-08-04, #58 on 2026-08-06 (`distinct` 60% → **100%**) and ~~#59~~ on
+  2026-08-12 (`ranking` 87.5% → **100%**), all three deterministic. **Both #59
+  and #60 have a failed prompt attempt on record** — read this before trying
+  #60 again:
   - **#59** (superlatives return the measure): the recommended rule naming the
     superlative vocabulary took `ranking` from **87.5% to 62.5%**. The 3B model
     copied the concrete example verbatim, including its `ASC` direction on a
     "highest" question, breaking two cases that had been passing 3/3. An
-    abstract rewrite measured the same. Reverted.
+    abstract rewrite measured the same. Reverted — and then fixed as a rewrite,
+    see below.
   - **#60** (units vs orders): the recommended rule *did* fix its own case —
     `filter` 91% → 100% — but cost `ranking` 87.5% → 75%, for an identical
     93/99 across the three categories either way. It moves failures rather than
@@ -390,6 +398,27 @@ None are blocking, but they're the honest loose ends:
   that provably fixes its target case can still be not worth shipping. Compare
   *category* totals across the whole eval, not the headline — 86.0–91.2 is the
   observed range, wide enough to hide a 12-point category swing.
+- ~~**Superlatives answer with the measure instead of the row (#59)**~~ —
+  **fixed** 2026-08-12, deterministically, and it is the second entry in this
+  file to overturn its own "not derivable" verdict after #74 did.
+
+  **The verdict was wrong about where to look, in a way worth naming.** The
+  issue said the entity column "requires knowing which column is the intended
+  entity, and that is a guess — unlike #52, the AST does not carry the answer."
+  Both halves of that are true and the conclusion still does not follow: the
+  *question* carries it ("which **product**") and the *schema* confirms it,
+  which is precisely how #73 resolves "for each **category**". #74 found the
+  data as a third source; this one is a reminder that the question text was
+  always a source too, and "the AST does not carry it" had been read as "nothing
+  does".
+
+  The direction — the thing the reverted prompt rule got wrong, applying `ASC`
+  to "highest" — is read off the aggregate, so this cannot make that mistake.
+
+  **It declines where the measure needs aggregating first.** "Which region has
+  the highest total revenue?" ranks per-region sums, and the row holding the
+  single largest order is a different and plausible answer. That is #74's
+  shape, and guessing between them would be worse than leaving it.
 - ~~**Date handling is the largest accuracy gap (#69)**~~ and ~~**per-group
   questions answered with one scalar (#73)**~~ — both **fixed**. `date` 7/15 →
   13-15/15, `group_by` 22/27 → **27/27**. Overall **94.7%**, five categories at
@@ -433,11 +462,18 @@ None are blocking, but they're the honest loose ends:
   table itself is a third source, and #59/#60 have not been re-examined against
   it. That is not a promise either yields — see below — only that the reason
   they were grouped with #74 no longer holds for all three.
-- **Two cases now fail, each 0/3, each with an issue.** #59 (superlative returns
-  the measure) and #60 (units vs orders). Both turn on a semantic choice, both
-  have a **failed, measured, reverted attempt on record**, and #60's attempt
-  fixed its own case while costing `ranking` 12.5 points — so "I made the target
-  case pass" is not evidence of anything. Read the note above before either.
+
+  **#59 then paid this out, though not from the source predicted.** Re-reading
+  it turned the answer up in the *question* — "which **product**" names the
+  entity and the schema confirms it — not in the table. The prediction was right
+  that a re-examination was owed and wrong about where it would land, which is a
+  better argument for doing it than the one made here.
+- **One case now fails, 0/3, with an issue.** #60 (units vs orders). It turns on
+  a semantic choice, it has a **failed, measured, reverted attempt on record**,
+  and that attempt fixed its own case while costing `ranking` 12.5 points — so
+  "I made the target case pass" is not evidence of anything. Read the note above
+  before it. #59, its twin in this paragraph for four rounds, went the other way
+  once someone re-read where its answer could come from.
 - ~~**Nothing watches for EOL runtimes (#47)**~~ — **fixed** 2026-08-06.
   `eol-watch.yml` runs monthly against `endoflife.date` and opens/updates one
   rolling issue. It parses the pins out of the real files rather than
@@ -520,13 +556,14 @@ someone provisions something. That is the honest state of the project.
    untested line.
 9. ~~PDF export truncation (#46)~~ — done 2026-08-03.
 10. ~~EOL-runtime watch (#47)~~ — done 2026-08-06.
-11. ~~Accuracy: #69 (dates)~~, ~~#73 (per-group)~~, ~~#74 (HAVING)~~ — all done.
-    Accuracy is **96.5%** and six of eight categories are at 100%.
-    **#59 and #60 remain, and both have a failed attempt on record** — read the
-    note in "Known gaps" before touching either; the prompt fix each issue
-    recommends is the one that was tried and reverted. Five deterministic
-    repairs have now landed (#52, #58, #69, #73, #74) and every prompt edit
-    attempted has been reverted; that is the pattern to plan around.
+11. ~~Accuracy: #69 (dates)~~, ~~#73 (per-group)~~, ~~#74 (HAVING)~~,
+    ~~#59 (superlatives)~~ — all done. Accuracy is **98.2%** and seven of eight
+    categories are at 100%.
+    **#60 remains, and has a failed attempt on record** — read the note in
+    "Known gaps" before touching it; the prompt fix the issue recommends is the
+    one that was tried and reverted. Six deterministic repairs have now landed
+    (#52, #58, #69, #73, #74, #59) and every prompt edit attempted has been
+    reverted; that is the pattern to plan around.
 12. Billing feature gaps — proration, dunning, invoices (#31). Explicitly
     post-launch; **do not start before #19** proves the money path.
 

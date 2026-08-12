@@ -936,3 +936,215 @@ def move_aggregate_threshold_to_having(sql: str, question: str, conn) -> str:
 
     logger.info("Moved a row-level threshold into HAVING over the summed measure")
     return repaired
+
+
+# ── Superlatives return the measure, not the row (issue #59) ──────────────────
+#
+#   "Which product has the lowest unit price?"
+#     -> SELECT MIN(price) FROM sales_data
+#     want SELECT product FROM sales_data ORDER BY price ASC LIMIT 1
+#
+# The answer comes back as `1500`. The user asked *which product* and got a
+# number with no product attached — and unlike a truncated or unlabelled result,
+# a confident scalar invites no second look. The mirror-image question
+# ("highest unit price") passes every run, so the model can express the shape; it
+# collapses to the bare aggregate on MIN.
+#
+# ## Why the prompt route is not the fix
+#
+# The rule issue #59 recommends — naming the superlative vocabulary — was
+# written, measured and reverted: `ranking` went 87.5% -> 62.5% because the 3B
+# model copied the example's ASC direction onto "highest" questions. An abstract
+# rewrite measured the same. See PROJECT_STATUS.md; that is three prompt edits
+# reverted against five deterministic repairs kept.
+#
+# ## The two inferences, and why neither is a guess
+#
+# 1. **The direction.** Read off the AST: MIN means ASC, MAX means DESC. The
+#    thing the prompt fix got wrong is the thing this cannot get wrong.
+# 2. **The entity column.** The issue called this underivable ("the AST does not
+#    carry the answer"), and that is true of the AST — but the *question* carries
+#    it and the *schema* confirms it: "which **product**" names a real column,
+#    exactly as #73 resolves "for each **category**". Nothing is guessed; a
+#    question naming no real column produces no rewrite.
+#
+# The measure is projected alongside the entity rather than dropped: "Laptop"
+# alone answers the question, "Laptop, 1500" answers it and shows the evidence.
+#
+# Deliberately declines when the measure would need aggregating first. "Which
+# region has the highest total revenue?" wants MAX over per-region sums, and the
+# row holding the single largest order is a different — and plausible, and
+# wrong — answer. That is #74's territory, not this one.
+
+_MIN_MAX = {"min": "ASCENDING", "max": "DESCENDING"}
+
+# "which product", "which employee". Requires the interrogative: "what is the
+# smallest order amount?" genuinely wants the number, and is passing today.
+_WHICH_ENTITY = re.compile(r"\bwhich\s+(?:the\s+)?(?P<entity>[a-z_]+)\b")
+
+# Vocabulary saying the measure being ranked is an accumulation or a per-group
+# statistic, which no single row holds. Ranking rows by a raw column would
+# answer a different question, so decline rather than guess.
+_NOT_ROW_MEASURE_CUES = re.compile(
+    r"\b(?:total|totals|totalled|totaled|sum|summed|combined|cumulative|"
+    r"revenue|average|averages|averaged|avg|mean|median|"
+    r"count|number\s+of|how\s+many|most|fewest|each|per)\b"
+)
+
+
+def _match_entity(question: str, columns: list[str]) -> str | None:
+    """The column the question names as the entity it wants back, if exactly one."""
+    by_folded = {c.casefold(): c for c in columns}
+    found: set[str] = set()
+    for m in _WHICH_ENTITY.finditer(question.casefold()):
+        for candidate in _singular_plural_forms(m.group("entity")):
+            if candidate in by_folded:
+                found.add(by_folded[candidate])
+                break
+    return found.pop() if len(found) == 1 else None
+
+
+def _order_modifier(expression: dict, direction: str) -> dict:
+    return {
+        "type": "ORDER_MODIFIER",
+        "orders": [
+            {
+                "type": direction,
+                # ORDER_DEFAULT follows the connection's null order, which is
+                # NULLS LAST in DuckDB — so a NULL measure cannot win the
+                # ranking, matching MIN/MAX ignoring nulls.
+                "null_order": "ORDER_DEFAULT",
+                "expression": json.loads(json.dumps(expression)),
+            }
+        ],
+    }
+
+
+def _limit_one_modifier() -> dict:
+    return {
+        "type": "LIMIT_MODIFIER",
+        "limit": {
+            "class": "CONSTANT",
+            "type": "VALUE_CONSTANT",
+            "alias": "",
+            "query_location": 0,
+            "value": {"type": {"id": "INTEGER", "type_info": None}, "is_null": False, "value": 1},
+        },
+        "offset": None,
+    }
+
+
+def replace_bare_extreme_with_ranked_row(sql: str, question: str, conn) -> str:
+    """Return the row a superlative question asked about, not just its measure.
+
+    ``SELECT MIN(price) FROM t`` becomes
+    ``SELECT product, price FROM t ORDER BY price ASC LIMIT 1`` (#59).
+
+    Fires only when the question asks "which <column>" about a raw row measure,
+    the projection is exactly one bare ``MIN``/``MAX`` over a real column, and
+    there is no grouping, ordering or limit already. Returns the input unchanged
+    for anything else. Never raises.
+    """
+    if _NOT_ROW_MEASURE_CUES.search(question.casefold()):
+        return sql
+
+    try:
+        serialized = conn.execute("SELECT json_serialize_sql(?::VARCHAR)", [sql]).fetchone()[0]
+        payload = json.loads(serialized)
+    except Exception as exc:  # noqa: BLE001 — repair is best-effort by design
+        logger.debug("superlative repair: could not parse SQL (%s)", exc)
+        return sql
+
+    if payload.get("error"):
+        return sql
+    statements = payload.get("statements") or []
+    if len(statements) != 1:
+        return sql
+    node = statements[0].get("node") or {}
+
+    if node.get("type") != _SELECT_NODE:
+        return sql
+    # A grouped query already returns one row per entity, and an existing
+    # ORDER BY/LIMIT means the model expressed a ranking this would overwrite.
+    if node.get("group_expressions") or node.get("having"):
+        return sql
+    if node.get("modifiers") or node.get("qualify") or node.get("sample"):
+        return sql
+    if node.get("aggregate_handling") not in (None, "STANDARD_HANDLING"):
+        return sql
+
+    from_table = node.get("from_table") or {}
+    if from_table.get("type") != "BASE_TABLE":
+        return sql
+    table = from_table.get("table_name")
+    if not table:
+        return sql
+
+    # Exactly one projected MIN/MAX over a bare column. Two projections mean the
+    # entity is probably already there, and an expression argument
+    # (MIN(price * quantity)) has no column to order by without inventing one.
+    select_list = node.get("select_list") or []
+    if len(select_list) != 1:
+        return sql
+    extreme = select_list[0]
+    if extreme.get("class") != "FUNCTION":
+        return sql
+    direction = _MIN_MAX.get(str(extreme.get("function_name", "")).casefold())
+    if direction is None:
+        return sql
+    if extreme.get("distinct") or extreme.get("filter"):
+        return sql
+    if (extreme.get("order_bys") or {}).get("orders"):
+        return sql
+    children = extreme.get("children") or []
+    if len(children) != 1:
+        return sql
+    measure = _bare_column_name(children[0])
+    if measure is None:
+        return sql
+
+    by_folded = {c.casefold(): c for c in _table_columns(conn, table)}
+    measure_column = by_folded.get(measure.casefold())
+    if measure_column is None:
+        return sql
+    entity_column = _match_entity(question, list(by_folded.values()))
+    # "Which price is the lowest?" names the measure itself as the entity, and
+    # SELECT price ... ORDER BY price LIMIT 1 is just MIN(price) spelled longer.
+    if entity_column is None or entity_column.casefold() == measure_column.casefold():
+        return sql
+
+    measure_ref = json.loads(json.dumps(children[0]))
+    entity_ref = {
+        "class": _COLUMN_REF,
+        "type": _COLUMN_REF,
+        "alias": "",
+        "query_location": 0,
+        "column_names": [entity_column],
+    }
+    node["select_list"] = [entity_ref, measure_ref]
+    node["modifiers"] = [_order_modifier(measure_ref, direction), _limit_one_modifier()]
+
+    try:
+        repaired = conn.execute(
+            "SELECT json_deserialize_sql(?::JSON)", [json.dumps(payload)]
+        ).fetchone()[0]
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("superlative repair: could not rebuild SQL (%s)", exc)
+        return sql
+
+    if not repaired or not isinstance(repaired, str):
+        return sql
+
+    try:
+        conn.execute(f"EXPLAIN {repaired}")
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("superlative repair: rewrite does not bind (%s)", exc)
+        return sql
+
+    from app.nl2sql.sql_validator import is_safe_sql
+
+    if not is_safe_sql(repaired):
+        return sql
+
+    logger.info("Turned a bare MIN/MAX into the ranked row the question asked for")
+    return repaired

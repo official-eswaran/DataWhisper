@@ -192,14 +192,15 @@ against a deliberately stale pin before trusting it.
 
 - [x] **#61** — merged 2026-08-04 (`4c68e7c`)
 - [x] **#58** — merged 2026-08-06: `distinct` 60% → **100%**
-- [ ] **#59** — attempted, measured, **reverted**. Still open.
+- [x] **#59** — merged 2026-08-12: `ranking` 87.5% → **100%**. The prompt route
+      was the attempt that failed; the rewrite is in 7f below.
 - [ ] **#60** — attempted, measured, **reverted**. Still open.
 
 | issue | defect | severity | state |
 |---|---|---|---|
 | #61 | Dates are `TIMESTAMP_NS`, model emits `LIKE '2021%'` — **and the self-heal never runs for bind errors** | P1 | fixed |
 | #60 | "How many laptops sold" counts orders (3) instead of summing units (11) | P2 | **open** |
-| #59 | "Which product is cheapest" returns the price, not the product | P2 | **open** |
+| #59 | "Which product is cheapest" returns the price, not the product | P2 | fixed |
 | #58 | "List all the regions" omits `DISTINCT` — 25 rows instead of 4 | P2 | fixed |
 
 **#58 — what worked.** The prompt route was tried first, being cheapest, and
@@ -239,7 +240,9 @@ rather than the headline, which is noisy enough (86.0–91.2 observed) to hide a
 12-point category swing.
 
 **Do not** re-attempt either of these with another prompt edit without reading
-the two rows above first.
+the two rows above first. #59 shipped on 2026-08-12 as a rewrite instead (7f);
+#60 is still open and the row above is still the last word on the prompt route
+for it.
 
 **#61 is the one to read first.** Half of it is not an accuracy bug at all: the
 self-heal path in `pipeline.py` is unreachable for the failure it was written to
@@ -317,6 +320,38 @@ explicitly; they are what a clumsy fix breaks.
   scores the pipeline while every real user goes through the stream.
   `test_sql_repair.py` now asserts the two call sites apply the same set of
   repairs, structurally, so this cannot recur silently.
+
+### 7f. `#59` — Superlatives return the measure, not the row (P2)
+
+- [x] **Merged** — 2026-08-12. `ranking` 21/24 → **24/24**, overall 95.3% →
+  **98.2%** against a same-machine control taken minutes earlier. Sixth
+  deterministic repair (`replace_bare_extreme_with_ranked_row`).
+
+  **Attribution, because the headline overstates it.** +5 attempts, of which
+  **+3 are the repair** (`sales_cheapest_product` 0/3 → 3/3) and +2 are
+  `sales_march_revenue`, a known-flaky `date` case, landing 3/3 where the
+  control got 1/3. This repair cannot touch `date`. Call it +1.8 points.
+  `sales_most_expensive_product` — the case the reverted prompt rule broke, and
+  the one most exposed to any fix here — stayed 3/3.
+
+  **What made it derivable after the issue said it wasn't.** The issue's verdict
+  ("a repair would have to guess which column is the entity; the AST does not
+  carry it") is true about the AST and wrong about the conclusion. The question
+  names the entity — "which **product**" — and the schema confirms it against
+  real columns, which is exactly the mechanism #73 already used for "for each
+  **category**". Direction comes off the aggregate: MIN → `ASC`, MAX → `DESC`,
+  so the specific error that sank the prompt attempt is unreachable.
+
+  **It declines rather than guessing** when the ranked measure would need
+  aggregating first ("highest **total** revenue" — #74's shape), when the
+  question names no real column, when it names two, and when the query already
+  groups, orders or limits.
+
+  51 tests (`tests/test_superlative_repair.py`), 17 of 18 mutants killed. The
+  two survivors are documented redundancy: the `BASE_TABLE` check (DuckDB gives
+  no `table_name` to SUBQUERY/JOIN/TABLE_FUNCTION sources, so the next guard
+  already declines) and the closing `is_safe_sql` re-check, which the four
+  repairs before it also keep on the same reasoning.
 
 ### 7c. `#70` — Seven frontend components still untested (P2)
 
