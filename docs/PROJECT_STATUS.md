@@ -71,7 +71,7 @@ finished.
 |-------|------|
 | #21 | **The mail transport is implemented — only credentials are missing now.** `SMTP_HOST` unset is still a no-op that logs the link, so dev, tests and self-hosted installs are unchanged; set it and mail is actually sent over STARTTLS or implicit TLS. **The mailer refuses to authenticate over an unencrypted connection**, so a misconfiguration stops mail rather than leaking the SMTP password, and the verification link is no longer logged once a transport exists — it is a bearer credential, and the log was only ever the delivery mechanism in dev. 13 of 13 mutants killed. **It has never sent to a real server**; `GO_LIVE_CHECKLIST.md` has the one-command check. |
 | #25 | **A staging load test can no longer silently measure the wrong thing.** `loadtest/preflight.py` refuses the run when the target would throttle the generator, serve the queries from cache under `CACHE_MODE=cold`, or run out of monthly quota part-way through. All three were already documented as prose to remember; this fails instead. Verified in both directions against a local target — production-default limits block it, raised limits pass. **#25 itself is untouched:** the 8s p95 is still a laptop number, because there is still no staging to point it at. |
-| #19 | **The money path is now executed on every PR** — as far as it can be without an account. `scripts/stripe_drill.sh` signs Stripe-shaped events with a real HMAC and posts them to a running app (no Stripe account needed), and runs the SDK's outbound calls against stripe-mock, whose OpenAPI validation is the first thing other than our own monkeypatches to look at those requests. **It found #93 immediately.** **#19 was closed on 2026-08-13, and the round trip it tracked has still not happened**: no browser has completed a Checkout and no event Stripe generated has arrived. `BILLING.md` carries the checklist for when an account exists — treat it as the open item, not the issue tracker. |
+| #19 | **The money path is now executed on every PR** — as far as it can be without an account. `scripts/stripe_drill.sh` signs Stripe-shaped events with a real HMAC and posts them to a running app (no Stripe account needed), and runs the SDK's outbound calls against stripe-mock, whose OpenAPI validation is the first thing other than our own monkeypatches to look at those requests. **It found #93 immediately.** **#19 stays open**: no browser has completed a Checkout and no event Stripe generated has arrived. `BILLING.md` carries the checklist for when an account exists. |
 | #93 | **Every real Stripe webhook was 500ing, and had been since billing shipped.** `verify_event` converted the SDK's `Event` with `to_dict_recursive()`, which v15 does not have — and `isinstance(event, dict)` is False there, so *every* verified event took that branch. No subscription event could ever apply: a customer could pay and stay on `free`, and a cancellation never downgraded. Found by the #19 drill, which is the first thing that ever delivered a genuinely signed event. The suite's 27 billing tests all enter *after* the broken line, because they stub the function that fails. |
 | #18 | **The backup scripts are now executed, on every PR.** `scripts/restore_drill.sh` runs `backup.sh` → destroy → `restore.sh` → verify against a throwaway database, in both the Postgres and SQLite modes, and CI grew a Postgres service to run the path production actually uses. Until this, neither script had ever run — the runbook's own "an untested backup is not a backup" applied to the runbook. **It is not the production drill** and does not touch PITR, cross-region recovery or the real RTO; what it removes is "the scripts might not work" from the list of things that could go wrong during one. |
 | #70 | **`ErrorBoundary` covered — #70 closed.** Last of the seven and of the twelve. It sat at 94.44% because two tests lived in `App.test.jsx` from before it had a file of its own; they moved here, and the part nobody had reached was `handleReload` — the only way out of the fallback. 10 tests, component to **100%** on all four metrics, suite 262 → 270; overall **91.59%**. Gate **91/94/70/91 → 91/94/71/91**, verified to bite. 12 of 12 mutants killed. |
@@ -597,17 +597,13 @@ one item, one PR, merged before the next starts.
    it measure the rate limiter, the LLM cache or the quota gate instead of the
    app, which are the three ways this has historically gone wrong and were until
    2026-08-13 only prose in `loadtest/README.md`.
-3. **Stripe test-mode round trip** (~~#19~~, closed 2026-08-13 — *the work was
-   not done*). No browser has ever completed a hosted Checkout and no event
-   Stripe generated has ever arrived, so this stays on the list under its own
-   name rather than the issue's. The parts that do not need an account now run
-   on every PR (`scripts/stripe_drill.sh`), and the first thing they did was
-   find #93 — **the money path had never worked**. The remaining checklist is in
-   `BILLING.md`; its last line, diffing a real payload against the test
-   fixtures, is the one that would have caught #93 years earlier.
-
-   *A closed issue is not evidence, which is the same mistake as a green check
-   that cannot fail — see the convention at the end of this file.*
+3. **Stripe test-mode round trip** (#19). No browser has ever completed a hosted
+   Checkout and no event Stripe generated has ever arrived. The parts that do
+   not need an account now run on every PR (`scripts/stripe_drill.sh`), and the
+   first thing they did was find #93 — **the money path had never worked**. The
+   remaining checklist is in `BILLING.md`; its last line, diffing a real payload
+   against the test fixtures, is the one that would have caught #93 years
+   earlier.
 4. ~~**NL2SQL accuracy eval** (#16)~~ — done 2026-08-02, and it immediately
    found a real bug (#52, fixed 2026-08-03). Accuracy 78.4% → **88.9%**.
 
