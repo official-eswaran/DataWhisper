@@ -1,6 +1,6 @@
 # Project status & how to resume
 
-**Last updated:** 2026-08-12
+**Last updated:** 2026-08-13
 **Branch of record:** `main`.
 
 > ⚠️ **`master` is not the branch of record and does not exist on the remote.**
@@ -27,7 +27,7 @@ finished.
 |------|-------|
 | Backend tests | **663 passing**, `ruff` clean, **90.59%** coverage, gate **85** (#28) |
 | NL2SQL accuracy | **98.2%** (3 repeats, cache off); 6 of 8 at 100%, no case failing every run |
-| Frontend tests | **233 passing**, 10 of 12 components covered; gate **88/94/68/88** (#27, #70) |
+| Frontend tests | **262 passing**, 11 of 12 components covered; gate **91/94/70/91** (#27, #70) |
 | Build/runtime | Vite build OK, Node 24 (LTS), dependency audit clean |
 | E2E | Runs in GitHub Actions ✅; passes on attempt 1 since PR #63 (#45 fixed) |
 | Migrations | Head is `b92c4d17ae03` (email verification, #21) |
@@ -69,6 +69,12 @@ finished.
 | #58 | **DISTINCT repair.** `distinct` 60% → **100%**, deterministic. |
 | #69 | **Date period repair.** `date` 7/15 → **13/15**; overall 87.1% → **90.6%** with no other category moving. |
 | #73 | **Missing-GROUP-BY repair.** `group_by` 22/27 → **27/27**; overall **94.7%**. Five categories now at 100%. |
+
+### Shipped 2026-08-13
+
+| Issue | What |
+|-------|------|
+| #70 | **`Sidebar` covered** — sixth of the seven, and the last with any logic in it. The navigation behind the login wall, and the only route to the admin console. 29 tests, component to **100%** on all four metrics, suite 233 → 262; overall **91.43%**. Gate **88/94/68/88 → 91/94/70/91**, verified to bite. 21 of 21 mutants killed, including "the admin item is shown to everyone" and three separate ways of getting `aria-current` wrong. |
 
 ### Shipped 2026-08-12
 
@@ -132,7 +138,7 @@ python3 -m pip_audit -r requirements.txt --strict   # --strict is what CI runs
 # Frontend (from frontend/)
 npm ci
 npm run build                           # outputs to build/
-npm test                                # expect 233 passed; enforces coverage thresholds
+npm test                                # expect 262 passed; enforces coverage thresholds
 npm audit --omit=dev                    # see the allowlist note in ci.yml
 ```
 
@@ -326,11 +332,11 @@ None are blocking, but they're the honest loose ends:
   below the truth.
 
   **`Login` 2026-08-09**, **`AdminConsole` and `AuditLogs` 2026-08-10**,
-  **`AccountSettings` and `Dashboard` 2026-08-11** (#70) — all five to 100% on
-  all four metrics; suite 94 → 233, overall coverage 63.72% → **88.59%**.
-  **Two remain**: `Sidebar` and `ErrorBoundary` (the latter already sits at
-  94% incidentally). Everything touching accounts, audit data, destructive
-  actions or the Stripe return path is now covered.
+  **`AccountSettings` and `Dashboard` 2026-08-11**, **`Sidebar` 2026-08-13**
+  (#70) — all six to 100% on all four metrics; suite 94 → 262, overall coverage
+  63.72% → **91.43%**. **One remains**: `ErrorBoundary`, already at 94.44%
+  incidentally. Everything touching accounts, audit data, destructive actions,
+  navigation or the Stripe return path is now covered.
 
   **A raised gate is not automatically a ratchet, and this one wasn't.** Raising
   the thresholds by the original "a few points under measured" rule left the
@@ -578,14 +584,12 @@ someone provisions something. That is the honest state of the project.
 
 7. ~~Raise the backend coverage gate 70 → 85 (#28)~~ — done 2026-08-02.
 8. ~~Frontend coverage gate (#27)~~ — done 2026-08-06, `FileUpload` covered.
-   **`Login` done 2026-08-09; six components (#70) remain and are still the
-   cheapest win**, in value order: `AdminConsole`, `AuditLogs`,
-   `AccountSettings`, `Dashboard`, `Sidebar`, `ErrorBoundary`. One per PR, and
-   raise the thresholds as each lands — *then delete the suite you just wrote
-   and confirm `npm test` goes red*, because raising them is not the same as
-   ratcheting them. `AdminConsole`, `AuditLogs` and `AccountSettings` touch
-   other people's accounts and audit data, so they carry the most risk per
-   untested line.
+   **Six of the seven in #70 are done** (`Login`, `AdminConsole`, `AuditLogs`,
+   `AccountSettings`, `Dashboard`, `Sidebar`); **`ErrorBoundary` is the last**,
+   and the cheapest of the lot at 94.44% already. One per PR, and raise the
+   thresholds as each lands — *then delete the suite you just wrote and confirm
+   `npm test` goes red*, because raising them is not the same as ratcheting
+   them.
 9. ~~PDF export truncation (#46)~~ — done 2026-08-03.
 10. ~~EOL-runtime watch (#47)~~ — done 2026-08-06.
 11. ~~Accuracy: #69 (dates)~~, ~~#73 (per-group)~~, ~~#74 (HAVING)~~,

@@ -41,9 +41,9 @@ export default defineConfig({
         // assert that the render tests don't already cover.
         "src/index.jsx",
       ],
-      // A floor, not a target. Measured on 2026-08-11 with `Dashboard`
-      // covered: 88.59 statements / 94.07 branches / 69 functions /
-      // 88.59 lines.
+      // A floor, not a target. Measured on 2026-08-13 with `Sidebar`
+      // covered: 91.43 statements / 94.24 branches / 70.29 functions /
+      // 91.43 lines.
       //
       // **Set just under measured, and verify the gate bites (#70).** These sit
       // ~0.4 under rather than the "few points" the original #27 gate used,
@@ -61,12 +61,15 @@ export default defineConfig({
       // fail only when coverage genuinely drops, which is the intent. New
       // uncovered code must come with tests or move the gate deliberately.
       //
-      // Two components remain untested: Sidebar and ErrorBoundary. One per PR.
+      // One component remains untested: ErrorBoundary, which already sits at
+      // 94.44% incidentally. `branches` stays at 94 because Sidebar moved it by
+      // 0.17 — every branch it has was already being taken through Dashboard.
+      // Statements and functions are what bite.
       thresholds: {
-        statements: 88,
+        statements: 91,
         branches: 94,
-        functions: 68,
-        lines: 88,
+        functions: 70,
+        lines: 91,
       },
     },
   },

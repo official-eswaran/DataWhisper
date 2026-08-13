@@ -396,6 +396,11 @@ Follow-up to #27, which delivered the gate (the part that mattered) plus
 `AccountSettings` manipulate other people's accounts and audit data, so they
 carry the most risk per untested line.
 
+**Six of the seven are done as of 2026-08-13. `ErrorBoundary` is the last** —
+and the only one already above the gate on its own (94.44%), so it moves the
+number least and is worth doing for the uncovered path rather than the
+percentage.
+
 **One component per PR**, and **raise the thresholds in `vite.config.js` as each
 lands** — a gate that never moves is decoration, not a ratchet.
 
@@ -446,7 +451,24 @@ lands** — a gate that never moves is decoration, not a ratchet.
   the `?status=` marker** is what actually makes the effect idempotent — the
   second run finds no status and returns early. Deliberate redundancy, and the
   marker strip has its own test.
-- [ ] `Sidebar` · `ErrorBoundary`
+- [x] **`Sidebar`** — 2026-08-13. 29 tests, to **100%** on all four metrics;
+  suite 233 → 262, overall **91.43%**. Gate **88/94/68/88 → 91/94/70/91**,
+  verified to bite. 21 of 21 mutants killed.
+
+  Two of its behaviours are not cosmetic and the tests are weighted to them.
+  The `isAdmin` gate decides whether a member is offered a console that manages
+  other people's accounts, and `aria-current` is the only signal a screen-reader
+  user gets about where they are — the `active` class says nothing to them. So
+  there are three separate assertions on `aria-current` (set on the active tab,
+  *absent* rather than `"false"` on the others, and exactly one at a time), and
+  the mutants that flip it die on different tests.
+
+  **`branches` did not move and the threshold stayed at 94.** Every branch in
+  this component was already being taken through `Dashboard`'s suite; what was
+  missing was any assertion about the result. A component can sit at 7% of
+  statements with 100% of branches, which is worth remembering before reading a
+  branch number as coverage.
+- [ ] `ErrorBoundary`
 
 **Mutation-test the tests, not just the component — a helper's defaults can
 swallow the case.** `AdminConsole`'s "user list missing its array" test was
