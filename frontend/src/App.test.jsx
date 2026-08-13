@@ -2,7 +2,6 @@ import { render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, vi } from "vitest";
 import App from "./App";
-import ErrorBoundary from "./components/ErrorBoundary";
 
 // App now boots by calling /auth/refresh to recover a session from the httpOnly
 // cookie (#22). In tests there's no backend, so stub fetch to reject — that
@@ -15,32 +14,10 @@ beforeEach(() => {
 // Vite/Vitest resolves react-router-dom v7 (ESM) natively, so — unlike under
 // CRA's frozen Jest — we can now smoke-test the full App + router, not just the
 // router-free ErrorBoundary.
-
-function Boom() {
-  throw new Error("boom");
-}
-
-test("renders children normally", () => {
-  render(
-    <ErrorBoundary>
-      <div>hello world</div>
-    </ErrorBoundary>
-  );
-  expect(screen.getByText("hello world")).toBeInTheDocument();
-});
-
-test("shows a recovery UI when a child throws", () => {
-  // Silence the expected React error log for this test.
-  const spy = vi.spyOn(console, "error").mockImplementation(() => {});
-  render(
-    <ErrorBoundary>
-      <Boom />
-    </ErrorBoundary>
-  );
-  expect(screen.getByText(/Something went wrong/i)).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: /Reload app/i })).toBeInTheDocument();
-  spy.mockRestore();
-});
+//
+// The two ErrorBoundary tests that lived here until 2026-08-13 have moved to
+// `components/ErrorBoundary.test.jsx`, alongside the rest of that component's
+// behaviour (#70). This file is about the router.
 
 test("unauthenticated visit renders the login screen", async () => {
   render(
