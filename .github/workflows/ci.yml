@@ -35,6 +35,14 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
+      # Stripe's own mock API (#19). It validates requests against the same
+      # OpenAPI spec the real API is built from, so a malformed call fails here
+      # rather than during the first real checkout. It is stateless and canned:
+      # it proves request shape, never business behaviour.
+      stripe-mock:
+        image: stripe/stripe-mock:latest
+        ports:
+          - 12111:12111
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -73,6 +81,22 @@ jobs:
       - name: Restore drill — SQLite path (#18)
         working-directory: .
         run: ./scripts/restore_drill.sh
+
+      # Issue #19. The webhook half needs no Stripe account: the drill signs
+      # payloads with a real HMAC and posts them to a running app, which is the
+      # path that turned out to be broken in every deployment (#93) while 27
+      # unit tests passed over it. The outbound half runs against stripe-mock,
+      # so the SDK's requests are validated by Stripe's own OpenAPI spec rather
+      # than by our monkeypatches.
+      #
+      # This is still not #19. No browser completes a hosted Checkout here and
+      # no real Stripe event is ever received — see the header of
+      # stripe_drill.sh and the runbook in docs/BILLING.md.
+      - name: Stripe drill — webhook + SDK paths (#19)
+        working-directory: .
+        env:
+          STRIPE_API_BASE: http://localhost:12111
+        run: ./scripts/stripe_drill.sh
 
       - name: Dependency vulnerability audit (pip-audit)
         run: pip-audit -r requirements.txt --strict --progress-spinner off

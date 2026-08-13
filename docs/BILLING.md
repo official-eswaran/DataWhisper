@@ -68,6 +68,52 @@ a paying customer mid-month.
    `stripe_events` idempotency table.
 6. **Verify**: `GET /api/billing/` as an owner returns `"enabled": true`.
 
+### The drill (#19)
+
+```bash
+./scripts/stripe_drill.sh                       # webhook path, no account needed
+STRIPE_API_BASE=http://localhost:12111 ./scripts/stripe_drill.sh   # + stripe-mock
+```
+
+CI runs both on every PR. The webhook half signs Stripe-shaped payloads with a
+real HMAC and posts them to a running app, then checks what the plan actually
+did — accepted, applied, deduplicated on replay, `past_due` keeps the plan,
+deletion drops it, and a wrong signature or tampered body changes nothing. The
+outbound half puts the SDK's requests on the wire against stripe-mock, which
+validates them against Stripe's own OpenAPI spec.
+
+**Neither half is the round trip #19 asks for.** No browser completes a hosted
+Checkout, and no event Stripe actually generated is ever received.
+
+### The real round trip — the #19 checklist
+
+Needs test keys. Work through it in order and record the result of each line;
+this is the whole of what #19 is asking for.
+
+```bash
+export STRIPE_SECRET_KEY=sk_test_…  STRIPE_PRICE_PRO=price_…
+stripe listen --forward-to localhost:8000/api/billing/webhook   # prints whsec_…
+export STRIPE_WEBHOOK_SECRET=whsec_…
+./scripts/stripe_drill.sh          # runs the SDK half against real Stripe first
+```
+
+- [ ] `POST /api/billing/checkout` as an owner returns a `checkout.stripe.com`
+      URL, and the session's `client_reference_id` is that org's id
+- [ ] Paying with `4242 4242 4242 4242` in the browser completes and redirects
+      to `STRIPE_SUCCESS_URL`
+- [ ] `checkout.session.completed` arrives, is **signature-verified**, and the
+      org moves to `pro` — check the org row, not the UI
+- [ ] The plan moved because of the *webhook*, not the redirect: repeat with the
+      success URL never opened and confirm the upgrade still happens
+- [ ] `stripe trigger customer.subscription.updated` with a `past_due` status
+      leaves the org on `pro` (the grace rule)
+- [ ] Cancelling through the Billing Portal drops the org to `free`
+- [ ] Replaying any delivery from the Stripe dashboard returns 200 and changes
+      nothing (`stripe_events` dedup)
+- [ ] **Compare a real payload against `_stripe_shaped_event` in the tests.**
+      Any field the real event has and the fixture does not is a place the suite
+      is guessing. This is how #93 stayed hidden.
+
 ### Local testing
 
 ```bash
