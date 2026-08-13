@@ -15,6 +15,26 @@ jobs:
     defaults:
       run:
         working-directory: backend
+    # Postgres exists for the restore drill (#18), not for the test suite —
+    # the suite still runs on SQLite and must not start depending on this.
+    # Production runs Postgres, so a drill that only ever exercised the SQLite
+    # branch of backup.sh/restore.sh would leave pg_dump/pg_restore — the code
+    # path a real recovery uses — as unexecuted as it was before the drill
+    # existed. Pinned to 16 to match docker-compose and the runner's client.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: drill
+          POSTGRES_PASSWORD: drill
+          POSTGRES_DB: drill
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U drill"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -35,6 +55,24 @@ jobs:
         # so a 90 gate would fail on any change that touches billing without
         # adding tests. Raise this again once billing catches up (#28).
         run: pytest --cov=app --cov-report=term-missing --cov-fail-under=85
+
+      # Issue #18. Until this step existed, neither backup.sh nor restore.sh had
+      # ever been executed — the runbook's own "an untested backup is not a
+      # backup" applied to the runbook. Both modes run: Postgres is what
+      # production uses, SQLite is what a self-hoster gets by default.
+      #
+      # This is not the production drill. It says nothing about PITR, about
+      # cross-region recovery, or about the real RTO — see the header of
+      # restore_drill.sh for the full list of what it does not prove.
+      - name: Restore drill — Postgres path (#18)
+        working-directory: .
+        env:
+          DRILL_DATABASE_URL: postgresql+psycopg://drill:drill@localhost:5432/drill
+        run: ./scripts/restore_drill.sh
+
+      - name: Restore drill — SQLite path (#18)
+        working-directory: .
+        run: ./scripts/restore_drill.sh
 
       - name: Dependency vulnerability audit (pip-audit)
         run: pip-audit -r requirements.txt --strict --progress-spinner off

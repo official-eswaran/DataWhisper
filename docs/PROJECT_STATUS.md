@@ -74,6 +74,7 @@ finished.
 
 | Issue | What |
 |-------|------|
+| #18 | **The backup scripts are now executed, on every PR.** `scripts/restore_drill.sh` runs `backup.sh` → destroy → `restore.sh` → verify against a throwaway database, in both the Postgres and SQLite modes, and CI grew a Postgres service to run the path production actually uses. Until this, neither script had ever run — the runbook's own "an untested backup is not a backup" applied to the runbook. **It is not the production drill** and does not touch PITR, cross-region recovery or the real RTO; what it removes is "the scripts might not work" from the list of things that could go wrong during one. |
 | #70 | **`ErrorBoundary` covered — #70 closed.** Last of the seven and of the twelve. It sat at 94.44% because two tests lived in `App.test.jsx` from before it had a file of its own; they moved here, and the part nobody had reached was `handleReload` — the only way out of the fallback. 10 tests, component to **100%** on all four metrics, suite 262 → 270; overall **91.59%**. Gate **91/94/70/91 → 91/94/71/91**, verified to bite. 12 of 12 mutants killed. |
 | #70 | **`Sidebar` covered** — sixth of the seven, and the last with any logic in it. The navigation behind the login wall, and the only route to the admin console. 29 tests, component to **100%** on all four metrics, suite 233 → 262; overall **91.43%**. Gate **88/94/68/88 → 91/94/70/91**, verified to bite. 21 of 21 mutants killed, including "the admin item is shown to everyone" and three separate ways of getting `aria-current` wrong. |
 
@@ -562,10 +563,16 @@ one item, one PR, merged before the next starts.
 
 **P0 — decides whether a bad day is survivable.** None of these are code.
 
-1. **Restore drill from a real backup** (#5, #18). `scripts/restore.sh` and
-   `DISASTER_RECOVERY.md` exist and have never been executed. The RPO ≤ 15 min /
-   RTO ≤ 1 h targets are assertions, not measurements. An untested backup is not
-   a backup — this is the single highest-risk open item in the project.
+1. **Restore drill from a real backup** (#5, #18). Still the single
+   highest-risk open item, and still blocked on a real deployment — but the
+   ground under it moved on 2026-08-13. `scripts/restore_drill.sh` now executes
+   `backup.sh` and `restore.sh` end to end on every PR, in both the Postgres and
+   SQLite modes, and fails if the round trip loses an org, an audit entry, a
+   hash-chain link or a byte of a dataset file. **The scripts work.** What is
+   still unmeasured is everything the environment owns: PITR, cross-region
+   recovery, and the RPO ≤ 15 min / RTO ≤ 1 h targets, which remain assertions.
+   The quarterly-drill checklist in `DISASTER_RECOVERY.md` now says exactly what
+   to record.
 2. **k6 against real staging** (#25). Every latency SLO, alert threshold and the
    E2E's 120s timeout currently descends from one laptop run. Set
    `LLM_CACHE_ENABLED=false` and raise the target's rate limits first, or you
