@@ -188,3 +188,18 @@ admin tab, toasts, and strips the param so a refresh doesn't replay it.
   blocks work rather than adding to the bill. Plans are flat-rate only.
 - **Proration handling on plan switches** is left to Stripe's defaults.
 - **Dunning emails** — configure them in the Stripe dashboard, not here.
+
+**Invoice history is implemented** (#31, 2026-08-13): `GET /api/billing/invoices`
+returns the org's recent invoices and `BillingCard` renders them for the owner.
+Two things about it are deliberate:
+
+- **It is a projection, not a passthrough.** A Stripe invoice carries ~100
+  fields including the full customer object; the route returns nine. Anything
+  Stripe adds later has to be let through on purpose rather than arriving in a
+  browser by default.
+- **Amounts stay in the currency's minor unit.** How many minor units make a
+  major one is currency-specific — 100 for USD, **1 for JPY** — so the API hands
+  over Stripe's integer and the code, and the UI asks `Intl` how many decimal
+  places that currency has. Dividing by 100 in the API would print ¥29 for a
+  ¥2,900 invoice, which is what the first version of the formatter did until a
+  test caught it.

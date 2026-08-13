@@ -39,9 +39,9 @@ finished.
 
 | Area | State |
 |------|-------|
-| Backend tests | **680 passing**, `ruff` clean, **90.49%** coverage, gate **85** (#28) |
+| Backend tests | **690 passing**, `ruff` clean, **90.49%** coverage, gate **85** (#28) |
 | NL2SQL accuracy | **98.2%** (3 repeats, cache off); 6 of 8 at 100%, no case failing every run |
-| Frontend tests | **270 passing**, **all 12 components covered**; gate **91/94/71/91** (#27, #70) |
+| Frontend tests | **287 passing**, **all 12 components covered**; gate **91.5/94/71/91.5** (#27, #70) |
 | Build/runtime | Vite build OK, Node 24 (LTS), dependency audit clean |
 | E2E | Runs in GitHub Actions ✅; passes on attempt 1 since PR #63 (#45 fixed) |
 | Migrations | Head is `b92c4d17ae03` (email verification, #21) |
@@ -69,6 +69,7 @@ finished.
 
 | Issue | What |
 |-------|------|
+| #31 | **Invoice history shipped** — the one part of #31 that does not depend on billing having run for real. `GET /api/billing/invoices` (owner-only, a nine-field projection of Stripe's ~100) plus a table in `BillingCard`. A failed load says so rather than rendering as "no invoices", per #82. 10 of 10 mutants killed, and one of them found a real bug first: the formatter divided by 100 unconditionally, which prints ¥29 for a ¥2,900 invoice. `Intl` knows each currency's decimal places; a hand-maintained list of zero-decimal currencies would have gone stale. **Proration, dunning and metered usage remain open** — all three need real subscription behaviour to observe. |
 | #21 | **The mail transport is implemented — only credentials are missing now.** `SMTP_HOST` unset is still a no-op that logs the link, so dev, tests and self-hosted installs are unchanged; set it and mail is actually sent over STARTTLS or implicit TLS. **The mailer refuses to authenticate over an unencrypted connection**, so a misconfiguration stops mail rather than leaking the SMTP password, and the verification link is no longer logged once a transport exists — it is a bearer credential, and the log was only ever the delivery mechanism in dev. 13 of 13 mutants killed. **It has never sent to a real server**; `GO_LIVE_CHECKLIST.md` has the one-command check. |
 | #25 | **A staging load test can no longer silently measure the wrong thing.** `loadtest/preflight.py` refuses the run when the target would throttle the generator, serve the queries from cache under `CACHE_MODE=cold`, or run out of monthly quota part-way through. All three were already documented as prose to remember; this fails instead. Verified in both directions against a local target — production-default limits block it, raised limits pass. **#25 itself is untouched:** the 8s p95 is still a laptop number, because there is still no staging to point it at. |
 | #19 | **The money path is now executed on every PR** — as far as it can be without an account. `scripts/stripe_drill.sh` signs Stripe-shaped events with a real HMAC and posts them to a running app (no Stripe account needed), and runs the SDK's outbound calls against stripe-mock, whose OpenAPI validation is the first thing other than our own monkeypatches to look at those requests. **It found #93 immediately.** **#19 stays open**: no browser has completed a Checkout and no event Stripe generated has arrived. `BILLING.md` carries the checklist for when an account exists. |
@@ -151,14 +152,14 @@ finished.
 ```bash
 # Backend (from backend/)
 export SECRET_KEY=$(python3 -c 'import secrets;print(secrets.token_hex(32))') DEBUG=true
-python3 -m pytest                       # expect 680 passed
+python3 -m pytest                       # expect 690 passed
 python3 -m ruff check app tests evals   # expect clean
 python3 -m pip_audit -r requirements.txt --strict   # --strict is what CI runs
 
 # Frontend (from frontend/)
 npm ci
 npm run build                           # outputs to build/
-npm test                                # expect 270 passed; enforces coverage thresholds
+npm test                                # expect 287 passed; enforces coverage thresholds
 npm audit --omit=dev                    # see the allowlist note in ci.yml
 ```
 

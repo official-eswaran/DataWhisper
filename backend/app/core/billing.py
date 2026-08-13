@@ -70,6 +70,27 @@ def price_for_plan(plan: str) -> str | None:
     return settings.stripe_price_by_plan.get(plan)
 
 
+def _as_dict(obj) -> dict:
+    """Plain nested dict for a Stripe SDK object, whatever the SDK version (#93).
+
+    ``StripeObject`` was a ``dict`` subclass once and is not in v15, and the
+    recursive-conversion helper has been renamed at least once. Everything in
+    this module reads its inputs as plain dicts, so normalise here rather than
+    guessing at an SDK API in each caller. ``json.loads(str(obj))`` is not used:
+    it depends on the object's repr staying JSON, which is not a contract.
+    """
+    if isinstance(obj, dict):
+        return dict(obj)
+    for attr in ("to_dict_recursive", "_to_dict_recursive"):
+        convert = getattr(obj, attr, None)
+        if callable(convert):
+            return convert()
+    to_dict = getattr(obj, "to_dict", None)
+    if callable(to_dict):
+        return to_dict()
+    raise ValueError(f"cannot read a Stripe {type(obj).__name__} as a dict")
+
+
 # ── Outbound: sessions we hand the user ───────────────────────────────────────
 
 def ensure_customer(org_id: int, org_name: str, email: str) -> str:
@@ -126,28 +147,52 @@ def create_portal_session(org_id: int) -> str:
     return session.url
 
 
-# ── Inbound: webhook ──────────────────────────────────────────────────────────
+def list_invoices(org_id: int, limit: int = 12) -> list[dict]:
+    """The org's most recent invoices, trimmed to what a UI needs (#31).
 
-def _as_dict(obj) -> dict:
-    """Plain nested dict for a Stripe SDK object, whatever the SDK version (#93).
+    Returns ``[]`` for an org that has never checked out — it has no Stripe
+    customer, so there is nothing to list and that is not an error.
 
-    ``StripeObject`` was a ``dict`` subclass once and is not in v15, and the
-    recursive-conversion helper has been renamed at least once. Everything in
-    this module reads its inputs as plain dicts, so normalise here rather than
-    guessing at an SDK API in each caller. ``json.loads(str(obj))`` is not used:
-    it depends on the object's repr staying JSON, which is not a contract.
+    Deliberately a projection rather than a passthrough. A Stripe invoice
+    carries a hundred-odd fields including internal ids, the full customer
+    object and line-item metadata; forwarding all of it to the browser would
+    leak more than the page shows and would tie the frontend to Stripe's schema.
+
+    Amounts stay in the currency's minor unit (cents), as Stripe reports them.
+    Dividing by 100 here would be wrong for zero-decimal currencies like JPY,
+    and the formatting belongs where the locale is known anyway.
     """
-    if isinstance(obj, dict):
-        return dict(obj)
-    for attr in ("to_dict_recursive", "_to_dict_recursive"):
-        convert = getattr(obj, attr, None)
-        if callable(convert):
-            return convert()
-    to_dict = getattr(obj, "to_dict", None)
-    if callable(to_dict):
-        return to_dict()
-    raise ValueError(f"cannot read a Stripe {type(obj).__name__} as a dict")
+    billing_row = get_org_billing(org_id)
+    customer_id = billing_row["customer_id"]
+    if not customer_id:
+        return []
 
+    stripe = _client()
+    response = stripe.Invoice.list(customer=customer_id, limit=max(1, min(limit, 100)))
+    data = _as_dict(response).get("data") or []
+    return [_invoice_summary(_as_dict(invoice)) for invoice in data]
+
+
+def _invoice_summary(invoice: dict) -> dict:
+    """One invoice as the billing page needs it, and nothing else."""
+    return {
+        "id": invoice.get("id") or "",
+        # Stripe's human-facing reference (DW-0001). Drafts have none yet.
+        "number": invoice.get("number") or "",
+        # draft|open|paid|uncollectible|void
+        "status": invoice.get("status") or "",
+        "amount_due": int(invoice.get("amount_due") or 0),
+        "amount_paid": int(invoice.get("amount_paid") or 0),
+        "currency": (invoice.get("currency") or "").lower(),
+        "created": int(invoice.get("created") or 0),
+        # Stripe-hosted pages. Both can be absent on a draft, and the UI has to
+        # cope rather than render a dead link.
+        "hosted_invoice_url": invoice.get("hosted_invoice_url") or "",
+        "invoice_pdf": invoice.get("invoice_pdf") or "",
+    }
+
+
+# ── Inbound: webhook ──────────────────────────────────────────────────────────
 
 def verify_event(payload: bytes, signature: str) -> dict:
     """Verify a webhook payload's signature and return the parsed event.

@@ -12,6 +12,7 @@ Three routes with deliberately different trust models:
 
 See ``app.core.billing`` for the entitlement rules.
 """
+import logging
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -22,6 +23,7 @@ from app.core.database import get_org_billing, get_org_name, get_user_by_usernam
 from app.core.quota import PLAN_LIMITS, usage_summary
 from app.core.security import get_current_user
 
+logger = logging.getLogger("datawhisper.billing")
 router = APIRouter()
 
 
@@ -102,6 +104,33 @@ def open_portal(user: Annotated[dict, Depends(get_current_user)]):
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
     return {"portal_url": url}
+
+
+@router.get("/invoices")
+def list_invoices(user: Annotated[dict, Depends(get_current_user)]):
+    """The org's recent Stripe invoices (#31).
+
+    Owner-only, like the other two billing routes: an invoice states what the
+    workspace pays and when, which is the owner's business rather than every
+    member's. The org id comes from the JWT, never a parameter — the same rule
+    that stops one org starting a checkout for another.
+
+    Returns an empty list for an org that has never checked out. That is the
+    normal state of a free org, not an error, and the UI renders it as "no
+    invoices yet".
+    """
+    _require_billing_enabled()
+    _require_owner(user)
+
+    try:
+        invoices = billing.list_invoices(user.get("org_id", -1))
+    except Exception as exc:  # noqa: BLE001 — Stripe being down is not our 500
+        logger.warning("stripe: could not list invoices: %s", exc)
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            "Couldn't reach Stripe to load your invoices. Try again shortly.",
+        ) from exc
+    return {"invoices": invoices}
 
 
 @router.post("/webhook")
