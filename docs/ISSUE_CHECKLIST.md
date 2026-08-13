@@ -388,7 +388,9 @@ explicitly; they are what a clumsy fix breaks.
 
 ### 7c. `#70` — Seven frontend components still untested (P2)
 
-- [ ] **Merged**
+- [x] **Merged** — 2026-08-13, seven PRs over five days. All twelve components
+  covered, each to **100%** on all four metrics; suite 94 → **270**, overall
+  coverage 63.72% → **91.59%**, gate 60/85/50/60 → **91/94/71/91**.
 
 Follow-up to #27, which delivered the gate (the part that mattered) plus
 `FileUpload`. `Login`, `AdminConsole`, `AuditLogs`, `AccountSettings`,
@@ -468,7 +470,22 @@ lands** — a gate that never moves is decoration, not a ratchet.
   missing was any assertion about the result. A component can sit at 7% of
   statements with 100% of branches, which is worth remembering before reading a
   branch number as coverage.
-- [ ] `ErrorBoundary`
+- [x] **`ErrorBoundary`** — 2026-08-13. 10 tests, to **100%** on all four
+  metrics; suite 262 → 270, overall **91.59%**. Gate **91/94/70/91 →
+  91/94/71/91**, verified to bite. 12 of 12 mutants killed.
+
+  It was already at 94.44% because two tests lived in `App.test.jsx` from before
+  it had a file of its own — they moved here, and the part nobody had reached
+  was `handleReload`, the only way out of the fallback. **A boundary that
+  catches but cannot recover is half a boundary**, and the half that was
+  untested was the recovery.
+
+  Two notes for anyone testing a class boundary next. React re-renders a failed
+  subtree in development to rebuild the stack, so a fixture that counts its own
+  renders measures React, not the component — flip a flag from the test instead.
+  And `reload()` normally ends the story, so the `setState({hasError: false})`
+  before it looks redundant; stubbing reload is exactly the case where it is
+  not, and that test is what kills the mutant which drops it.
 
 **Mutation-test the tests, not just the component — a helper's defaults can
 swallow the case.** `AdminConsole`'s "user list missing its array" test was

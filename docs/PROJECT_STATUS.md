@@ -27,7 +27,7 @@ finished.
 |------|-------|
 | Backend tests | **663 passing**, `ruff` clean, **90.59%** coverage, gate **85** (#28) |
 | NL2SQL accuracy | **98.2%** (3 repeats, cache off); 6 of 8 at 100%, no case failing every run |
-| Frontend tests | **262 passing**, 11 of 12 components covered; gate **91/94/70/91** (#27, #70) |
+| Frontend tests | **270 passing**, **all 12 components covered**; gate **91/94/71/91** (#27, #70) |
 | Build/runtime | Vite build OK, Node 24 (LTS), dependency audit clean |
 | E2E | Runs in GitHub Actions ✅; passes on attempt 1 since PR #63 (#45 fixed) |
 | Migrations | Head is `b92c4d17ae03` (email verification, #21) |
@@ -74,6 +74,7 @@ finished.
 
 | Issue | What |
 |-------|------|
+| #70 | **`ErrorBoundary` covered — #70 closed.** Last of the seven and of the twelve. It sat at 94.44% because two tests lived in `App.test.jsx` from before it had a file of its own; they moved here, and the part nobody had reached was `handleReload` — the only way out of the fallback. 10 tests, component to **100%** on all four metrics, suite 262 → 270; overall **91.59%**. Gate **91/94/70/91 → 91/94/71/91**, verified to bite. 12 of 12 mutants killed. |
 | #70 | **`Sidebar` covered** — sixth of the seven, and the last with any logic in it. The navigation behind the login wall, and the only route to the admin console. 29 tests, component to **100%** on all four metrics, suite 233 → 262; overall **91.43%**. Gate **88/94/68/88 → 91/94/70/91**, verified to bite. 21 of 21 mutants killed, including "the admin item is shown to everyone" and three separate ways of getting `aria-current` wrong. |
 
 ### Shipped 2026-08-12
@@ -138,7 +139,7 @@ python3 -m pip_audit -r requirements.txt --strict   # --strict is what CI runs
 # Frontend (from frontend/)
 npm ci
 npm run build                           # outputs to build/
-npm test                                # expect 262 passed; enforces coverage thresholds
+npm test                                # expect 270 passed; enforces coverage thresholds
 npm audit --omit=dev                    # see the allowlist note in ci.yml
 ```
 
@@ -331,12 +332,17 @@ None are blocking, but they're the honest loose ends:
   v8 provider also measures `build/assets/*.js` and reports a number ~10 points
   below the truth.
 
-  **`Login` 2026-08-09**, **`AdminConsole` and `AuditLogs` 2026-08-10**,
-  **`AccountSettings` and `Dashboard` 2026-08-11**, **`Sidebar` 2026-08-13**
-  (#70) — all six to 100% on all four metrics; suite 94 → 262, overall coverage
-  63.72% → **91.43%**. **One remains**: `ErrorBoundary`, already at 94.44%
-  incidentally. Everything touching accounts, audit data, destructive actions,
-  navigation or the Stripe return path is now covered.
+  **#70 is closed as of 2026-08-13: all twelve components are covered**, each
+  to 100% on all four metrics — `Login` (08-09), `AdminConsole` and `AuditLogs`
+  (08-10), `AccountSettings` and `Dashboard` (08-11), `Sidebar` and
+  `ErrorBoundary` (08-13). Suite 94 → 270, overall coverage 63.72% →
+  **91.59%**.
+
+  **What is left below 100% is not a component.** `App.jsx` sits at 87.3% (the
+  boot/refresh path) and `services/api.js` at 51.62% — mostly thin wrappers
+  exercised through the components that call them. Neither was in #70's scope,
+  and `api.js` is the honest next target for anyone wanting the number
+  higher.
 
   **A raised gate is not automatically a ratchet, and this one wasn't.** Raising
   the thresholds by the original "a few points under measured" rule left the
@@ -583,13 +589,11 @@ someone provisions something. That is the honest state of the project.
 **P2 — quality, cheap.** Each is roughly an hour.
 
 7. ~~Raise the backend coverage gate 70 → 85 (#28)~~ — done 2026-08-02.
-8. ~~Frontend coverage gate (#27)~~ — done 2026-08-06, `FileUpload` covered.
-   **Six of the seven in #70 are done** (`Login`, `AdminConsole`, `AuditLogs`,
-   `AccountSettings`, `Dashboard`, `Sidebar`); **`ErrorBoundary` is the last**,
-   and the cheapest of the lot at 94.44% already. One per PR, and raise the
-   thresholds as each lands — *then delete the suite you just wrote and confirm
-   `npm test` goes red*, because raising them is not the same as ratcheting
-   them.
+8. ~~Frontend coverage gate (#27)~~ — done 2026-08-06, and ~~**#70**~~ —
+   **done 2026-08-13**. All twelve components covered, each to 100% on all four
+   metrics; suite 94 → 270, gate 60/85/50/60 → **91/94/71/91**, ratcheted once
+   per PR and verified to bite each time. What remains uncovered is `App.jsx`'s
+   boot path and `services/api.js` — neither is a component.
 9. ~~PDF export truncation (#46)~~ — done 2026-08-03.
 10. ~~EOL-runtime watch (#47)~~ — done 2026-08-06.
 11. ~~Accuracy: #69 (dates)~~, ~~#73 (per-group)~~, ~~#74 (HAVING)~~,
