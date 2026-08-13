@@ -76,13 +76,27 @@ stripe trigger customer.subscription.updated
 ```
 
 Use test keys (`sk_test_…`) and Stripe's test cards. Nothing in the test suite
-touches Stripe — outbound calls are stubbed and webhooks are fed directly to the
-handler.
+touches Stripe — outbound calls are stubbed and most webhook tests are fed
+directly to the handler.
+
+**Except the ones that matter.** `tests/test_billing.py` now also signs
+Stripe-shaped payloads with a real HMAC and posts them through the route with
+nothing patched, because the stubs were hiding #93. If you add a webhook
+behaviour, add it there too — a test that patches `verify_event` cannot tell you
+whether a real event would have arrived.
 
 ---
 
 ## Things worth knowing before you touch this code
 
+- **Never hand a Stripe SDK object to code that expects a dict (#93).**
+  `StripeObject` was a `dict` subclass in older SDKs and is not in v15, and the
+  recursive-conversion helper has been renamed. `verify_event` therefore returns
+  `json.loads(payload)` — the bytes `construct_event` has just authenticated —
+  which has no SDK version surface at all. Where an SDK object is unavoidable
+  (`Subscription.retrieve`), `_as_dict` normalises it. This bug 500'd **every**
+  real webhook from the day billing shipped until 2026-08-13, and the suite
+  could not see it because it stubbed the exact function that failed.
 - **The webhook needs the raw request body.** Signature verification is an HMAC
   over the exact bytes Stripe sent. Parsing to JSON and re-serialising changes
   the bytes and every signature fails. `stripe_webhook` reads

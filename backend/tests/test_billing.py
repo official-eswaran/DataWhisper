@@ -379,3 +379,164 @@ def test_webhook_route_processes_a_verified_event(client, monkeypatch):
 def test_webhook_route_503_when_billing_is_off(client):
     r = client.post("/api/billing/webhook", content=b"{}")
     assert r.status_code == 503
+
+
+# ── The unstubbed path (#93) ──────────────────────────────────────────────────
+#
+# Everything above enters after signature verification: `verify_event` is either
+# monkeypatched or exercised only for its rejection cases. That left the success
+# path — construct a real signature, verify it, hand the result to
+# `handle_event` — unexecuted by anything, and it was broken from the day
+# billing shipped. `stripe.Event` stopped being a `dict` subclass, so
+# `verify_event` took its conversion branch, called a method the SDK no longer
+# has, and every genuine webhook 500'd. No subscription event could ever apply.
+#
+# These tests use a real HMAC and do not patch `verify_event`, so the branch
+# that broke is the branch under test.
+
+
+def _stripe_signature(payload: bytes, secret: str) -> str:
+    """A Stripe-Signature header, built the way Stripe builds one.
+
+    Deliberately hand-rolled rather than taken from the SDK: a signature made by
+    the same code that verifies it would agree with itself no matter what either
+    side did.
+    """
+    import hashlib
+    import hmac
+    import time
+
+    ts = int(time.time())
+    digest = hmac.new(secret.encode(), f"{ts}.".encode() + payload, hashlib.sha256).hexdigest()
+    return f"t={ts},v1={digest}"
+
+
+def _stripe_shaped_event(org_id: int, event_type: str, status: str, event_id: str) -> dict:
+    """A payload shaped like one Stripe actually sends.
+
+    The `object` discriminators and envelope fields are load-bearing: the SDK
+    needs them to build a typed Event, and `construct_event` raises without
+    them. The `_event`/`_sub` helpers above omit them, which is fine when the
+    handler is called directly and fatal when it is not.
+    """
+    import time
+
+    return {
+        "id": event_id,
+        "object": "event",
+        "api_version": "2024-06-20",
+        "created": int(time.time()),
+        "livemode": False,
+        "pending_webhooks": 0,
+        "request": {"id": None, "idempotency_key": None},
+        "type": event_type,
+        "data": {
+            "object": {
+                "id": "sub_real_1",
+                "object": "subscription",
+                "status": status,
+                "customer": "cus_real_1",
+                "metadata": {"org_id": str(org_id)},
+                "items": {
+                    "object": "list",
+                    "data": [
+                        {
+                            "id": "si_real_1",
+                            "object": "subscription_item",
+                            "price": {"id": "price_pro_123", "object": "price"},
+                        }
+                    ],
+                },
+            }
+        },
+    }
+
+
+def _post_signed(client, event: dict, secret: str = "whsec_test_93") -> object:
+    import json as _json
+
+    payload = _json.dumps(event).encode()
+    return client.post(
+        "/api/billing/webhook",
+        content=payload,
+        headers={"stripe-signature": _stripe_signature(payload, secret)},
+    )
+
+
+@pytest.fixture
+def signed_webhooks(monkeypatch, prices):
+    _enable(monkeypatch)
+    monkeypatch.setattr(settings, "STRIPE_WEBHOOK_SECRET", "whsec_test_93")
+
+
+def test_a_genuinely_signed_event_is_accepted(client, signed_webhooks):
+    """The regression test for #93: this returned 500 before the fix."""
+    org_id = _new_org()
+    r = _post_signed(
+        client,
+        _stripe_shaped_event(org_id, "customer.subscription.updated", "active", "evt_real_1"),
+    )
+    assert r.status_code == 200, r.text
+    assert get_org_billing(org_id)["plan"] == "pro"
+
+
+def test_verify_event_returns_a_plain_dict(monkeypatch, prices):
+    """`handle_event` indexes into nested structures, so a shallow conversion —
+    the other tempting fix — would fail at `items.data[0].price.id`."""
+    _enable(monkeypatch)
+    monkeypatch.setattr(settings, "STRIPE_WEBHOOK_SECRET", "whsec_test_93")
+    import json as _json
+
+    event = _stripe_shaped_event(1, "customer.subscription.updated", "active", "evt_real_2")
+    payload = _json.dumps(event).encode()
+
+    parsed = billing.verify_event(payload, _stripe_signature(payload, "whsec_test_93"))
+
+    assert type(parsed) is dict
+    nested = parsed["data"]["object"]["items"]["data"][0]["price"]["id"]
+    assert nested == "price_pro_123"
+    assert type(parsed["data"]["object"]) is dict
+
+
+def test_a_signed_cancellation_downgrades_the_org(client, signed_webhooks):
+    org_id = _new_org()
+    _post_signed(
+        client,
+        _stripe_shaped_event(org_id, "customer.subscription.updated", "active", "evt_real_3"),
+    )
+    assert get_org_billing(org_id)["plan"] == "pro"
+
+    r = _post_signed(
+        client,
+        _stripe_shaped_event(org_id, "customer.subscription.deleted", "active", "evt_real_4"),
+    )
+    assert r.status_code == 200, r.text
+    assert get_org_billing(org_id)["plan"] == "free"
+
+
+def test_a_replayed_signed_event_is_deduplicated(client, signed_webhooks):
+    org_id = _new_org()
+    event = _stripe_shaped_event(org_id, "customer.subscription.updated", "active", "evt_real_5")
+    assert _post_signed(client, event).status_code == 200
+    second = _post_signed(client, event)
+    assert second.status_code == 200
+    assert "duplicate" in second.json()["result"]
+
+
+def test_a_tampered_body_is_rejected_after_signing(client, signed_webhooks):
+    """Signature over the original bytes, then the bytes change — the exact
+    thing the raw-body handling in the route exists to catch."""
+    import json as _json
+
+    org_id = _new_org()
+    event = _stripe_shaped_event(org_id, "customer.subscription.updated", "active", "evt_real_6")
+    payload = _json.dumps(event).encode()
+    header = _stripe_signature(payload, "whsec_test_93")
+
+    r = client.post(
+        "/api/billing/webhook",
+        content=payload.replace(b'"active"', b'"acTive"'),
+        headers={"stripe-signature": header},
+    )
+    assert r.status_code == 400
+    assert get_org_billing(org_id)["plan"] == "free"
