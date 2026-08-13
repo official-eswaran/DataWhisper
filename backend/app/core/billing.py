@@ -19,6 +19,7 @@ only decides *which* plan an org is on.
 """
 from __future__ import annotations
 
+import json
 import logging
 
 from app.core.config import settings
@@ -127,24 +128,51 @@ def create_portal_session(org_id: int) -> str:
 
 # ── Inbound: webhook ──────────────────────────────────────────────────────────
 
+def _as_dict(obj) -> dict:
+    """Plain nested dict for a Stripe SDK object, whatever the SDK version (#93).
+
+    ``StripeObject`` was a ``dict`` subclass once and is not in v15, and the
+    recursive-conversion helper has been renamed at least once. Everything in
+    this module reads its inputs as plain dicts, so normalise here rather than
+    guessing at an SDK API in each caller. ``json.loads(str(obj))`` is not used:
+    it depends on the object's repr staying JSON, which is not a contract.
+    """
+    if isinstance(obj, dict):
+        return dict(obj)
+    for attr in ("to_dict_recursive", "_to_dict_recursive"):
+        convert = getattr(obj, attr, None)
+        if callable(convert):
+            return convert()
+    to_dict = getattr(obj, "to_dict", None)
+    if callable(to_dict):
+        return to_dict()
+    raise ValueError(f"cannot read a Stripe {type(obj).__name__} as a dict")
+
+
 def verify_event(payload: bytes, signature: str) -> dict:
     """Verify a webhook payload's signature and return the parsed event.
 
     Raises ValueError on a bad signature or malformed body. Signature
     verification is the *only* thing authenticating this endpoint, so an
     unset webhook secret is treated as a hard failure rather than a skip.
+
+    **The dict comes from the raw payload, not from the SDK object** (#93).
+    ``construct_event`` authenticates the bytes; once it has, those bytes are
+    the event, and parsing them gives a plain nested dict that every consumer
+    here already expects. Converting the returned ``stripe.Event`` instead is
+    what broke: it was a ``dict`` subclass in older SDKs and is not in v15, so
+    the conversion branch ran, called a method that no longer exists, and every
+    verified webhook 500'd. Reading the payload has no version surface at all.
     """
     if not settings.STRIPE_WEBHOOK_SECRET:
         raise ValueError("STRIPE_WEBHOOK_SECRET is not configured")
 
     stripe = _client()
     try:
-        event = stripe.Webhook.construct_event(
-            payload, signature, settings.STRIPE_WEBHOOK_SECRET
-        )
+        stripe.Webhook.construct_event(payload, signature, settings.STRIPE_WEBHOOK_SECRET)
     except Exception as exc:  # SignatureVerificationError or JSON decode failure
         raise ValueError(f"Invalid Stripe signature: {exc}") from exc
-    return event if isinstance(event, dict) else event.to_dict_recursive()
+    return json.loads(payload)
 
 
 def _plan_from_subscription(subscription: dict) -> str | None:
@@ -234,7 +262,6 @@ def handle_event(event: dict) -> str:
             return "checkout completed, no subscription"
         stripe = _client()
         subscription = stripe.Subscription.retrieve(subscription_id)
-        sub = subscription if isinstance(subscription, dict) else subscription.to_dict_recursive()
-        return _apply_subscription(sub)
+        return _apply_subscription(_as_dict(subscription))
 
     return f"ignored event type {event_type}"
