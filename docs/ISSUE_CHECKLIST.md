@@ -600,13 +600,31 @@ mode the baseline used.
 ### `#19` — Stripe test-mode round trip (P0)
 
 - [ ] **Done**
+- [x] **Groundwork merged** — 2026-08-13. `scripts/stripe_drill.sh`, run by CI in
+  both modes on every PR.
 
 27 unit tests, none touch Stripe. No checkout has completed, no real webhook has
 arrived. Confirm a signature-verified `customer.subscription.updated` moves the
 plan and a portal cancel drops it.
 
-**Unblocked by** a Stripe account — business verification takes days on their end,
-so start that clock early even though the work sits here.
+**The groundwork found that the money path had never worked (#93).** The webhook
+half of the drill needs no account — it signs Stripe-shaped payloads with a real
+HMAC and posts them to a running app — and the first genuinely signed event ever
+delivered to this application returned **500**. `verify_event` was converting the
+SDK object with a method stripe v15 does not have, so no subscription event
+could ever apply. 27 tests passed over it because they stub the function that
+fails. Fixed in #94.
+
+**That is the lesson to carry into the rest of Track B:** a stub at a trust
+boundary is not a small compromise. It is a guarantee that the boundary is
+untested, and here it hid a total failure of the thing the feature exists to do.
+
+**Unblocked by** a Stripe account — business verification takes days on their
+end, so start that clock early even though the work sits here. The checklist to
+work through once keys exist is in `BILLING.md` ("The real round trip"), and its
+last line is the one that matters most: diff a real Stripe payload against the
+fixtures, because every field the fixtures guess at is a place the suite is
+still blind.
 
 ### `#21` (second half) — email/captcha infrastructure
 
