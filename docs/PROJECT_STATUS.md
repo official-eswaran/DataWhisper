@@ -23,9 +23,23 @@ overstates it: there is real engineering work left in the "Known gaps" section
 below. None of it blocks a deploy; all of it is worth doing before calling this
 finished.
 
+> **The single most useful thing in this file, if you read nothing else.** On
+> 2026-08-13 the four P0/P1 items blocked on infrastructure were each given the
+> part that *could* be done from a dev machine: the backup scripts, the money
+> path, the load-test target check, and the mail transport all now execute
+> instead of being described. The first of those drills found that **every
+> Stripe webhook had returned 500 since billing shipped** (#93) — no customer
+> could ever have been upgraded — past 27 passing billing tests, because those
+> tests stubbed the exact function that failed.
+>
+> The pattern behind it, and behind two more near-misses the same day: **a check
+> that cannot fail is worse than no check, because it is believed.** Before
+> trusting anything green in this repo, ask what it would take for it to go red,
+> and then do that.
+
 | Area | State |
 |------|-------|
-| Backend tests | **663 passing**, `ruff` clean, **90.59%** coverage, gate **85** (#28) |
+| Backend tests | **680 passing**, `ruff` clean, **90.49%** coverage, gate **85** (#28) |
 | NL2SQL accuracy | **98.2%** (3 repeats, cache off); 6 of 8 at 100%, no case failing every run |
 | Frontend tests | **270 passing**, **all 12 components covered**; gate **91/94/71/91** (#27, #70) |
 | Build/runtime | Vite build OK, Node 24 (LTS), dependency audit clean |
@@ -51,25 +65,6 @@ finished.
 | #14 | #7, #8 | Frontend CRA→Vite, code-splitting, a11y, admin console + onboarding UI |
 | — | #5 (part) | Stripe billing: hosted Checkout + Portal + webhooks ([BILLING.md](BILLING.md)) |
 
-### Shipped 2026-08-02
-
-| PR | What |
-|----|------|
-| #49 | Coverage gate 70 → 85 (#28); `ISSUE_CHECKLIST.md` as the work queue |
-| — | **NL2SQL accuracy eval** (#16): `backend/evals/`, 57 cases, first measured baseline **78.4%** |
-| — | **GROUP BY key repair** (#52): deterministic AST rewrite; accuracy **78.4% → 88.9%** |
-
-### Shipped 2026-08-06
-
-| Issue | What |
-|-------|------|
-| #21 | **Email verification gates queries.** Per-org, keyed on the owner — a per-user check let an unverified owner create a member via the admin route and query as them. Off under DEBUG; existing accounts grandfathered by the migration. Mail transport is a no-op interface (SMTP/captcha still deferred). |
-| #47 | **EOL-runtime watch.** `scripts/check_eol.py` + monthly `eol-watch.yml`, checking `endoflife.date`. Parses pins from the real files and *fails* rather than reporting all-clear if one stops matching. |
-| #27 | **Frontend coverage gate.** `npm test` is now `vitest run --coverage`; `FileUpload` covered. |
-| #58 | **DISTINCT repair.** `distinct` 60% → **100%**, deterministic. |
-| #69 | **Date period repair.** `date` 7/15 → **13/15**; overall 87.1% → **90.6%** with no other category moving. |
-| #73 | **Missing-GROUP-BY repair.** `group_by` 22/27 → **27/27**; overall **94.7%**. Five categories now at 100%. |
-
 ### Shipped 2026-08-13
 
 | Issue | What |
@@ -88,14 +83,6 @@ finished.
 |-------|------|
 | #60 | **Units-vs-rows repair.** `filter` 30/33 → **33/33**; `sales_laptop_units` 0/3 → 3/3. Seventh deterministic repair, and the last eval case that failed every run. **The headline stayed at 98.2%** — the +3 attempts were offset by two flaky cases losing 3 between them, neither reachable by this repair. `sales_order_count` and `sales_total_quantity`, the two a clumsy fix breaks, stayed 3/3. |
 | #59 | **Superlative repair.** `ranking` 21/24 → **24/24**; `sales_cheapest_product` 0/3 → 3/3 with `sales_most_expensive_product` — the case a clumsy fix breaks — still 3/3. Sixth deterministic repair, and the first to overturn a "not derivable" verdict recorded in this file. **Read the attribution:** the round measured 98.2% against a 95.3% control taken on the same machine minutes earlier, but only +3 of the +5 attempts are the repair; the other +2 are the flaky `sales_march_revenue` landing 3/3 where the control got 1/3. |
-
-### Shipped 2026-08-08
-
-| Issue | What |
-|-------|------|
-| #74 | **Aggregate-threshold repair.** `having` 0/3 → **3/3** — the last category at zero. Overall 94.7% → **96.5%**, with every other category unmoved attempt-for-attempt. Fifth deterministic repair. The "which aggregate?" guess is handled by declining on any non-SUM vocabulary; the "is this even an aggregate threshold?" question turned out to be answerable from the *data* (does the projected column repeat?) rather than the phrasing. See "Known gaps". |
-| — | **Both query paths now provably apply the same repairs.** #74 was first wired into `pipeline.py` only — the eval would have scored it green while every real user, who goes through the SSE stream in `query.py`, still saw the bug. `test_sql_repair.py` now asserts the two call sites match, structurally, so the next repair is covered the day it is written. |
-| #59, #60 | **Attempted, measured, reverted — still open.** See the note below. (Both fixed 2026-08-12, as rewrites rather than prompt rules.) |
 
 ### Shipped 2026-08-11
 
@@ -119,6 +106,33 @@ finished.
 | #70 | **`Login` covered** — first of the seven. 13 tests, component to 100% on all four metrics, suite 94 → 107. Gate ratcheted 60/85/50/60 → **64/90/56/64**, and *verified to bite*: the first attempt raised it by the old "few points under" rule and still passed with all 13 new tests deleted. Six components remain. |
 | #77 | **`Login` failure messages fixed.** Lockout, disabled-account and rate-limit outcomes each say what actually happened, instead of all rendering as "Invalid credentials". Found while writing #70's tests, filed rather than folded in, then fixed straight after — and the characterization test that pinned the defect was replaced by per-status assertions. Note `429` has two unrelated causes (account lockout vs slowapi per-IP limit) that only the response body tells apart. Suite 107 → 116; gate 64/90/56/64 → **64/91/57/64**. |
 
+### Shipped 2026-08-08
+
+| Issue | What |
+|-------|------|
+| #74 | **Aggregate-threshold repair.** `having` 0/3 → **3/3** — the last category at zero. Overall 94.7% → **96.5%**, with every other category unmoved attempt-for-attempt. Fifth deterministic repair. The "which aggregate?" guess is handled by declining on any non-SUM vocabulary; the "is this even an aggregate threshold?" question turned out to be answerable from the *data* (does the projected column repeat?) rather than the phrasing. See "Known gaps". |
+| — | **Both query paths now provably apply the same repairs.** #74 was first wired into `pipeline.py` only — the eval would have scored it green while every real user, who goes through the SSE stream in `query.py`, still saw the bug. `test_sql_repair.py` now asserts the two call sites match, structurally, so the next repair is covered the day it is written. |
+| #59, #60 | **Attempted, measured, reverted — still open.** See the note below. (Both fixed 2026-08-12, as rewrites rather than prompt rules.) |
+
+### Shipped 2026-08-06
+
+| Issue | What |
+|-------|------|
+| #21 | **Email verification gates queries.** Per-org, keyed on the owner — a per-user check let an unverified owner create a member via the admin route and query as them. Off under DEBUG; existing accounts grandfathered by the migration. Mail transport is a no-op interface (SMTP/captcha still deferred). |
+| #47 | **EOL-runtime watch.** `scripts/check_eol.py` + monthly `eol-watch.yml`, checking `endoflife.date`. Parses pins from the real files and *fails* rather than reporting all-clear if one stops matching. |
+| #27 | **Frontend coverage gate.** `npm test` is now `vitest run --coverage`; `FileUpload` covered. |
+| #58 | **DISTINCT repair.** `distinct` 60% → **100%**, deterministic. |
+| #69 | **Date period repair.** `date` 7/15 → **13/15**; overall 87.1% → **90.6%** with no other category moving. |
+| #73 | **Missing-GROUP-BY repair.** `group_by` 22/27 → **27/27**; overall **94.7%**. Five categories now at 100%. |
+
+### Shipped 2026-08-02
+
+| PR | What |
+|----|------|
+| #49 | Coverage gate 70 → 85 (#28); `ISSUE_CHECKLIST.md` as the work queue |
+| — | **NL2SQL accuracy eval** (#16): `backend/evals/`, 57 cases, first measured baseline **78.4%** |
+| — | **GROUP BY key repair** (#52): deterministic AST rewrite; accuracy **78.4% → 88.9%** |
+
 ### Shipped 2026-07-28 (audit session)
 
 | PR | What |
@@ -137,7 +151,7 @@ finished.
 ```bash
 # Backend (from backend/)
 export SECRET_KEY=$(python3 -c 'import secrets;print(secrets.token_hex(32))') DEBUG=true
-python3 -m pytest                       # expect 663 passed
+python3 -m pytest                       # expect 680 passed
 python3 -m ruff check app tests evals   # expect clean
 python3 -m pip_audit -r requirements.txt --strict   # --strict is what CI runs
 
@@ -578,24 +592,42 @@ one item, one PR, merged before the next starts.
    The quarterly-drill checklist in `DISASTER_RECOVERY.md` now says exactly what
    to record.
 2. **k6 against real staging** (#25). Every latency SLO, alert threshold and the
-   E2E's 120s timeout currently descends from one laptop run. Set
-   `LLM_CACHE_ENABLED=false` and raise the target's rate limits first, or you
-   measure the cache and the limiter instead of the app.
-3. **Stripe test-mode round trip** (#19). The money path is fully unit-tested
-   with stubs and has never touched a real account.
+   E2E's 120s timeout still descends from one laptop run. **Run
+   `loadtest/preflight.py` first** — it refuses the run if the target would make
+   it measure the rate limiter, the LLM cache or the quota gate instead of the
+   app, which are the three ways this has historically gone wrong and were until
+   2026-08-13 only prose in `loadtest/README.md`.
+3. **Stripe test-mode round trip** (#19). No browser has ever completed a hosted
+   Checkout and no event Stripe generated has ever arrived. The parts that do
+   not need an account now run on every PR (`scripts/stripe_drill.sh`), and the
+   first thing they did was find #93 — **the money path had never worked**. The
+   remaining checklist is in `BILLING.md`; its last line, diffing a real payload
+   against the test fixtures, is the one that would have caught #93 years
+   earlier.
 4. ~~**NL2SQL accuracy eval** (#16)~~ — done 2026-08-02, and it immediately
    found a real bug (#52, fixed 2026-08-03). Accuracy 78.4% → **88.9%**.
 
-**Everything below P0 that could be done from a dev machine now has been.** What
-is left in P0 is blocked on infrastructure and accounts, not on effort — which
-means the top of this list has not moved since 2026-07-21 and will not until
-someone provisions something. That is the honest state of the project.
+**Everything that could be done from a dev machine now has been — including
+inside P0.** Each of the three above has had its dev-machine half built and
+merged: the backup and restore scripts execute in CI, the money path is drilled
+end to end short of a real account, and a staging run can no longer silently
+measure the wrong thing. What is left in each is what only an environment can
+answer — PITR and a real RTO, a real Checkout, real hardware under load.
+
+**So the top of this list still has not moved since 2026-07-21, and will not
+until someone provisions something.** That is the honest state of the project.
+The difference is that when someone does, none of these will start with
+"first find out whether the script works".
 
 **P1 — real bugs and abuse vectors.**
 
 5. ~~E2E cold-path flakiness (#45)~~ — done 2026-08-05 (PR #63).
-6. ~~Email verification on signup (#21)~~ — **half done** 2026-08-06. Queries are
-   gated; the mail transport is a no-op, so the remaining half is Track B.
+6. ~~Email verification on signup (#21)~~ — **gate done** 2026-08-06,
+   **transport done** 2026-08-13. Queries are gated and mail is really sent once
+   `SMTP_HOST` is set; the mailer refuses to authenticate over an unencrypted
+   connection, so a misconfiguration stops mail rather than leaking the
+   password. What remains is an account: nothing has sent to a real server, and
+   hCaptcha is untouched. `GO_LIVE_CHECKLIST.md` §3 has the check to run.
 
 **P2 — quality, cheap.** Each is roughly an hour.
 
@@ -623,6 +655,15 @@ someone provisions something. That is the honest state of the project.
   this way: one asserted a button was disabled when it would have been disabled
   regardless, another compared a global thread count that other tests inflated.
   Green is not evidence on its own.
+- **Ask what would make a green check go red, then do that.** Mutation testing
+  is this rule applied to unit tests; it applies to everything else too, and
+  three things written on 2026-08-13 needed it. The restore drill grew an
+  `assert-destroyed` step, without which a restore that did nothing would have
+  passed a seed→verify pair. The load-test preflight's first rate-limit check
+  bursted an endpoint carrying no limiter, and passed against a target on
+  production defaults. And #93 — a total failure of the money path — survived 27
+  tests that stubbed the function containing the bug. **A check that cannot fail
+  is worse than no check, because it is believed.**
 - **Tests must not reach a live Ollama.** See the architecture note above.
 - One focused PR per concern, against **`main`**, `ruff` clean, and update this
   file in the same PR.
