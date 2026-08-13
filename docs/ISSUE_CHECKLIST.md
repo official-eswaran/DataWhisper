@@ -587,6 +587,8 @@ finishes in about two seconds. The quarterly checklist in
 ### `#25` — k6 against real staging (P0)
 
 - [ ] **Done**
+- [x] **Groundwork merged** — 2026-08-13. `loadtest/preflight.py` blocks a run
+  against a target that would measure the limiter, the cache, or the quota gate.
 
 Every latency SLO, alert threshold and the E2E's 120s timeout descends from one
 dev-laptop run (38.3s cold / 61ms warm).
@@ -595,7 +597,16 @@ dev-laptop run (38.3s cold / 61ms warm).
 
 **Before running:** set `LLM_CACHE_ENABLED=false` and raise the target's rate
 limits, or you measure the cache and the limiter instead of the app. Record which
-mode the baseline used.
+mode the baseline used. **The preflight now enforces all of that** — run it
+first; it exits non-zero with the specific fix.
+
+**The bit worth remembering from writing it:** the first version of the
+rate-limit check bursted `/api/usage/`, which carries no limiter at all, so it
+passed against a target on production defaults. A check that cannot fail is
+worse than no check, because it is believed. It now bursts `POST
+/api/auth/login` — the cheapest route that *is* limited — with a nonexistent
+username, since failed attempts lock the account they name. Both directions are
+verified: production limits block, raised limits pass.
 
 ### `#19` — Stripe test-mode round trip (P0)
 

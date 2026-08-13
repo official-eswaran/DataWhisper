@@ -94,6 +94,35 @@ reset the counters between campaigns.
 | `k6-login-upload-query.js` | Ramping-VU scenario over the full flow with SLO thresholds. |
 | `sample.csv` | Self-contained dataset each VU uploads (copy of `sample_data/sales_data.csv`). |
 
+## Preflight — run this first (#25)
+
+```bash
+python3 loadtest/preflight.py --base-url https://staging.example.com \
+    --user ceo --password '…' --vus 10 --duration 5m --cache-mode cold
+```
+
+Exits non-zero, with the fix, if the target would make the run measure something
+other than the stack:
+
+| Check | Blocks when |
+|---|---|
+| reachable | `/health/ready` is not 200 |
+| rate limits | a 40-request login burst gets any 429 — see below |
+| cache | `CACHE_MODE=cold` while the target is already serving >5% from cache |
+| quota | the planned query count exceeds the org's remaining monthly allowance |
+
+Everything it checks is written in prose above, and prose does not fail a build.
+A staging run costs minutes and a coordinated window; finding out afterwards
+that `dw_rate_limited` was non-zero wastes both.
+
+**The rate-limit probe uses `POST /api/auth/login` with a username that does not
+exist.** Login is the cheapest route that actually carries a limiter —
+`/api/usage/` has none, so bursting it proves nothing, which the first version of
+this check did. The nonexistent username matters too: failed attempts lock the
+account they name, and there is no account here to lock. Note this proves
+`RATE_LIMIT_LOGIN` only; `QUERY` and `UPLOAD` are separate values, so raise all
+three together and let `dw_rate_limited` catch the rest.
+
 ## Run
 
 ```bash
