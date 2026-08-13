@@ -1,23 +1,45 @@
-"""Outbound mail — an interface with a no-op transport (issue #21).
+"""Outbound mail — a real SMTP transport behind a no-op default (issue #21).
 
-Deliberately no network client. `SMTP_HOST` is unset in dev, test and the
-current deployment, so `send` logs and returns; the same shape as `SENTRY_DSN`
-and `OTEL_EXPORTER_OTLP_ENDPOINT`, which are also inert until configured. Don't
-"fix" mail appearing not to send locally.
+`SMTP_HOST` unset is still the default and still sends nothing: dev, the test
+suite and any self-hosted deployment that has not configured mail keep working
+exactly as before, and the verification link goes to the log. Same shape as
+`SENTRY_DSN` and the OTel endpoint. Don't "fix" mail appearing not to send
+locally.
 
-The point of the seam is that the *verification flow* can be built, tested and
-enforced now, and the provider dropped in later without touching the callers —
-wiring a real SMTP/API transport is the deferred half of issue #21 and needs an
-account this repo doesn't have. `configured` is what tells an operator which
-half they're running.
+Set `SMTP_HOST` and mail is actually delivered. Only credentials are needed now;
+the account is still the thing this repo does not have, so **the transport below
+has never sent a message to a real server** — see `docs/GO_LIVE_CHECKLIST.md`
+for the one-command check to run once an account exists.
+
+Three rules the transport keeps, in order of how much they would cost to get
+wrong:
+
+* **Credentials never cross an unencrypted link.** If STARTTLS is disabled or
+  the server does not offer it, a configured password means the send is
+  abandoned, not attempted. A mail that does not go out is a support ticket; a
+  leaked SMTP password is somebody sending phishing as you.
+* **Nothing raises.** Registration has already committed by the time this runs,
+  so a mail failure must not turn a successful signup into a 500.
+* **The link is not logged once a transport exists.** The no-op path logs it
+  because that *is* the delivery mechanism in dev. A verification link is a
+  bearer credential for an account, and once mail really goes out, writing it to
+  a log aggregator is a second, permanent copy nobody revokes.
 """
 from __future__ import annotations
 
 import logging
+import smtplib
+import ssl
+from email.message import EmailMessage
 
 from app.core.config import settings
 
 logger = logging.getLogger("datawhisper.mailer")
+
+SUBJECT = "Verify your DataWhisper email address"
+
+# Implicit TLS. Anything else is submission/plaintext plus STARTTLS.
+_IMPLICIT_TLS_PORT = 465
 
 
 def configured() -> bool:
@@ -55,12 +77,68 @@ def send_verification_email(email: str, token: str) -> bool:
         )
         return False
 
-    # No provider is wired yet (deferred half of #21). Reaching here means an
-    # operator set SMTP_HOST and expects mail to go out, so this is a loud
-    # failure rather than a silent success that strands users unverified.
-    logger.error(
-        "mailer: SMTP_HOST is set but no transport is implemented — "
-        "verification mail to %s was NOT sent. See issue #21.",
-        email,
+    message = _build_message(email, link)
+    try:
+        _deliver(message)
+    except Exception:  # noqa: BLE001 — see the docstring; callers must not fail
+        # No link, no token, no password in this line — only who it was for.
+        logger.exception("mailer: could not send verification mail to %s", email)
+        return False
+    logger.info("mailer: sent verification mail to %s", email)
+    return True
+
+
+def _build_message(email: str, link: str) -> EmailMessage:
+    message = EmailMessage()
+    message["Subject"] = SUBJECT
+    message["From"] = settings.smtp_from
+    message["To"] = email
+    # Plain text only, deliberately: an HTML part would be a second place for
+    # the link to be wrong, and this mail has one job.
+    message.set_content(
+        "Welcome to DataWhisper.\n\n"
+        "Confirm this address to start asking questions of your data:\n\n"
+        f"{link}\n\n"
+        f"The link expires in {settings.EMAIL_VERIFICATION_TTL_HOURS} hours. "
+        "If you did not create this account, ignore this message — nothing "
+        "happens until the link is followed.\n"
     )
-    return False
+    return message
+
+
+def _deliver(message: EmailMessage) -> None:
+    """Open a connection, secure it, authenticate if asked, and send.
+
+    Raises on any failure; `send_verification_email` owns the swallowing.
+    """
+    host, port = settings.SMTP_HOST, settings.SMTP_PORT
+    timeout = settings.SMTP_TIMEOUT_SECONDS
+    context = ssl.create_default_context()
+
+    if port == _IMPLICIT_TLS_PORT:
+        with smtplib.SMTP_SSL(host, port, timeout=timeout, context=context) as server:
+            _authenticate(server, encrypted=True)
+            server.send_message(message)
+        return
+
+    with smtplib.SMTP(host, port, timeout=timeout) as server:
+        encrypted = False
+        if settings.SMTP_STARTTLS:
+            server.starttls(context=context)
+            # A second EHLO is required after STARTTLS: the pre-TLS capability
+            # list is not trustworthy and some servers advertise AUTH only after.
+            server.ehlo()
+            encrypted = True
+        _authenticate(server, encrypted=encrypted)
+        server.send_message(message)
+
+
+def _authenticate(server, *, encrypted: bool) -> None:
+    if not settings.SMTP_USERNAME:
+        return
+    if not encrypted:
+        raise RuntimeError(
+            "refusing to send SMTP credentials over an unencrypted connection — "
+            "set SMTP_STARTTLS=true, or use port 465"
+        )
+    server.login(settings.SMTP_USERNAME, settings.SMTP_PASSWORD)

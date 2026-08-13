@@ -124,9 +124,27 @@ class Settings(BaseSettings):
 
     # ── Outbound mail ───────────────────────────────────────────────────────────
     # Unset → the mailer is a no-op that logs, exactly like SENTRY_DSN and the
-    # OTel endpoint. Real SMTP/provider wiring is deliberately still open (the
-    # deferred half of issue #21); nothing here reaches the network yet.
+    # OTel endpoint. Set SMTP_HOST and mail is actually sent (issue #21).
     SMTP_HOST: str = ""
+    # 587 is submission-with-STARTTLS, the default everywhere. 465 is implicit
+    # TLS and switches the transport to SMTP_SSL automatically.
+    SMTP_PORT: int = 587
+    SMTP_USERNAME: str = ""
+    SMTP_PASSWORD: str = ""
+    # Envelope sender. Providers reject mail whose From they do not own, so this
+    # has no useful default — empty falls back to the username, which is the
+    # address most providers expect anyway.
+    SMTP_FROM: str = ""
+    # STARTTLS on a plaintext connection. Turning this off sends credentials in
+    # the clear, so the mailer refuses to authenticate without TLS regardless.
+    SMTP_STARTTLS: bool = True
+    # Registration blocks on the send, so this bounds how long a signup can hang
+    # on an unreachable mail server.
+    SMTP_TIMEOUT_SECONDS: float = 10.0
+
+    @property
+    def smtp_from(self) -> str:
+        return self.SMTP_FROM or self.SMTP_USERNAME
 
     # ── Shared state / scaling ──────────────────────────────────────────────────
     # When set (e.g. redis://redis:6379/0), the conversation store and rate

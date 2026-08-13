@@ -42,6 +42,39 @@ Edit `deploy/k8s/config.yaml` before applying:
       creds in the Secret
 - [ ] **Verify:** a pod can `aws s3 ls s3://<bucket>` (or the app's upload path works)
 
+### Outbound mail (#21)
+
+Open signup is an abuse vector until a verification mail actually arrives. With
+`SMTP_HOST` unset the app is a working self-hosted deployment whose verification
+links go to the log — fine for a private install, **not** for public signup.
+
+- [ ] `SMTP_HOST`, `SMTP_PORT` (587 for STARTTLS, 465 for implicit TLS)
+- [ ] `SMTP_USERNAME` / `SMTP_PASSWORD` in the Secret, never in config
+- [ ] `SMTP_FROM` — an address the provider lets you send as, or delivery fails
+      with a confusing 5xx. Empty falls back to `SMTP_USERNAME`.
+- [ ] `APP_BASE_URL` — the SPA's public origin. **Without it the mail contains a
+      bare token instead of a link**, which is honest but unusable.
+- [ ] Leave `SMTP_STARTTLS=true`. The mailer refuses to authenticate over an
+      unencrypted connection, so turning it off with credentials set means mail
+      silently stops rather than leaking the password.
+- [ ] **Verify — the transport has never sent to a real server:**
+
+      ```bash
+      python3 - <<'EOF'
+      from app.core import mailer
+      print("configured:", mailer.configured())
+      print("sent:", mailer.send_verification_email("you@yourdomain.com", "drill-token"))
+      EOF
+      ```
+
+      Run it from `backend/` with the deployment's env. `sent: True` and a mail
+      in the inbox is the whole check. `sent: False` means the reason is in the
+      log — the mailer never raises, by design, so nothing else will tell you.
+
+- [ ] **Then verify the flow, not just the transport:** register a real address,
+      follow the link, confirm the account can query. The gate is per-org keyed
+      on the *owner*, so test with a fresh org rather than an existing one.
+
 ## 4. Database migration
 
 - [ ] Build and push images (backend + frontend) to your registry; update the

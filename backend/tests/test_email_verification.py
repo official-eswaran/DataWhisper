@@ -13,6 +13,7 @@ mostly about:
 * The gate is **off under DEBUG**, so dev and the rest of this suite are
   unaffected. Every test here that wants the gate on turns it on explicitly.
 """
+import smtplib
 import uuid
 
 import pytest
@@ -354,15 +355,221 @@ def test_mailer_is_a_noop_without_a_transport(monkeypatch, caplog):
     assert "tok123" in caplog.text
 
 
-def test_mailer_fails_loudly_when_configured_but_unimplemented(monkeypatch, caplog):
-    """An operator who sets SMTP_HOST expects mail. Silently not sending would
-    strand every new org unverified with nothing in the logs."""
+# ── The SMTP transport (#21) ──────────────────────────────────────────────────
+#
+# `SMTP_HOST` unset is still a no-op; the tests above cover that. These cover
+# the transport that runs when an operator does configure one. Nothing here
+# opens a socket: `smtplib` is replaced with a recorder, which is also what lets
+# the credential and TLS assertions be made at all.
+
+
+class _FakeSMTP:
+    """Records what the mailer did to it, and can be told to fail on cue."""
+
+    instances: list["_FakeSMTP"] = []
+
+    def __init__(self, host, port, timeout=None, context=None):
+        self.host, self.port, self.timeout, self.context = host, port, timeout, context
+        self.calls: list[str] = []
+        self.logged_in: tuple[str, str] | None = None
+        self.sent: list[object] = []
+        self.starttls_fails = False
+        _FakeSMTP.instances.append(self)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.calls.append("close")
+        return False
+
+    def starttls(self, context=None):
+        self.calls.append("starttls")
+        if self.starttls_fails:
+            raise smtplib.SMTPNotSupportedError("STARTTLS not supported")
+
+    def ehlo(self):
+        self.calls.append("ehlo")
+
+    def login(self, username, password):
+        self.calls.append("login")
+        self.logged_in = (username, password)
+
+    def send_message(self, message):
+        self.calls.append("send")
+        self.sent.append(message)
+
+
+@pytest.fixture
+def smtp(monkeypatch):
+    """Configure a transport and capture it. Yields the class, not an instance —
+    the mailer constructs its own, and which class it picked is an assertion."""
+    _FakeSMTP.instances = []
+    monkeypatch.setattr(settings, "SMTP_HOST", "smtp.example.com")
+    monkeypatch.setattr(settings, "SMTP_PORT", 587)
+    monkeypatch.setattr(settings, "SMTP_USERNAME", "postmaster@example.com")
+    monkeypatch.setattr(settings, "SMTP_PASSWORD", "hunter2")
+    monkeypatch.setattr(settings, "SMTP_FROM", "noreply@example.com")
+    monkeypatch.setattr(settings, "SMTP_STARTTLS", True)
+    monkeypatch.setattr(smtplib, "SMTP", _FakeSMTP)
+    monkeypatch.setattr(smtplib, "SMTP_SSL", _FakeSMTP)
+    return _FakeSMTP
+
+
+def test_a_configured_transport_actually_sends(smtp, monkeypatch):
+    from app.core import mailer
+
+    monkeypatch.setattr(settings, "APP_BASE_URL", "https://app.example.com")
+    assert mailer.send_verification_email("user@example.com", "tok123") is True
+
+    (server,) = smtp.instances
+    assert server.calls == ["starttls", "ehlo", "login", "send", "close"]
+    assert (server.host, server.port) == ("smtp.example.com", 587)
+
+
+def test_the_message_carries_the_link_and_the_right_headers(smtp, monkeypatch):
+    from app.core import mailer
+
+    monkeypatch.setattr(settings, "APP_BASE_URL", "https://app.example.com")
+    mailer.send_verification_email("user@example.com", "tok123")
+
+    (message,) = smtp.instances[0].sent
+    assert message["To"] == "user@example.com"
+    assert message["From"] == "noreply@example.com"
+    assert "https://app.example.com/verify-email?token=tok123" in message.get_content()
+
+
+def test_the_from_address_falls_back_to_the_username(smtp, monkeypatch):
+    """Providers reject mail whose From they do not own, and the username is the
+    address they do."""
+    from app.core import mailer
+
+    monkeypatch.setattr(settings, "SMTP_FROM", "")
+    mailer.send_verification_email("user@example.com", "tok")
+    assert smtp.instances[0].sent[0]["From"] == "postmaster@example.com"
+
+
+def test_implicit_tls_is_used_on_port_465(smtp, monkeypatch):
+    from app.core import mailer
+
+    monkeypatch.setattr(settings, "SMTP_PORT", 465)
+    assert mailer.send_verification_email("user@example.com", "tok") is True
+    # No STARTTLS: the connection was already encrypted.
+    assert smtp.instances[0].calls == ["login", "send", "close"]
+
+
+def test_credentials_are_never_sent_unencrypted(smtp, monkeypatch):
+    """The assertion that matters most here. A mail that does not go out is a
+    support ticket; a leaked SMTP password is somebody phishing as you."""
+    from app.core import mailer
+
+    monkeypatch.setattr(settings, "SMTP_STARTTLS", False)
+    assert mailer.send_verification_email("user@example.com", "tok") is False
+
+    server = smtp.instances[0]
+    assert server.logged_in is None
+    assert "login" not in server.calls
+    assert "send" not in server.calls
+
+
+def test_a_server_that_cannot_start_tls_gets_no_credentials(smtp):
+    """Same rule, arrived at from the server's side rather than config."""
+    from app.core import mailer
+
+    original_init = _FakeSMTP.__init__
+
+    def failing_init(self, *a, **kw):
+        original_init(self, *a, **kw)
+        self.starttls_fails = True
+
+    _FakeSMTP.__init__ = failing_init
+    try:
+        assert mailer.send_verification_email("user@example.com", "tok") is False
+    finally:
+        _FakeSMTP.__init__ = original_init
+    assert smtp.instances[0].logged_in is None
+
+
+def test_an_unauthenticated_relay_still_sends(smtp, monkeypatch):
+    """No username means no credentials to protect, so plaintext is the
+    operator's call — an internal relay is a normal deployment."""
+    from app.core import mailer
+
+    monkeypatch.setattr(settings, "SMTP_USERNAME", "")
+    monkeypatch.setattr(settings, "SMTP_STARTTLS", False)
+    assert mailer.send_verification_email("user@example.com", "tok") is True
+    assert smtp.instances[0].calls == ["send", "close"]
+
+
+def test_a_broken_server_does_not_raise(smtp, monkeypatch):
+    """Registration has already committed; a mail failure must not 500 it."""
+    from app.core import mailer
+
+    def explode(self, message):
+        raise smtplib.SMTPRecipientsRefused({"user@example.com": (550, b"nope")})
+
+    monkeypatch.setattr(_FakeSMTP, "send_message", explode)
+    assert mailer.send_verification_email("user@example.com", "tok") is False
+
+
+def test_an_unreachable_server_does_not_raise(monkeypatch):
     from app.core import mailer
 
     monkeypatch.setattr(settings, "SMTP_HOST", "smtp.example.com")
-    with caplog.at_level("ERROR", logger="datawhisper.mailer"):
-        assert mailer.send_verification_email("a@example.com", "tok") is False
-    assert "NOT sent" in caplog.text
+
+    def refuse(*a, **kw):
+        raise OSError("connection refused")
+
+    monkeypatch.setattr(smtplib, "SMTP", refuse)
+    assert mailer.send_verification_email("user@example.com", "tok") is False
+
+
+def test_the_send_is_bounded_by_a_timeout(smtp, monkeypatch):
+    """Registration blocks on this call, so an unreachable server must not hang
+    the signup for longer than the configured budget."""
+    from app.core import mailer
+
+    monkeypatch.setattr(settings, "SMTP_TIMEOUT_SECONDS", 3.5)
+    mailer.send_verification_email("user@example.com", "tok")
+    assert smtp.instances[0].timeout == 3.5
+
+
+def test_the_link_is_not_logged_once_a_transport_exists(smtp, monkeypatch, caplog):
+    """A verification link is a bearer credential for the account. Logging it is
+    fine when the log *is* the delivery mechanism, and a second permanent copy
+    once it is not."""
+    from app.core import mailer
+
+    monkeypatch.setattr(settings, "APP_BASE_URL", "https://app.example.com")
+    with caplog.at_level("DEBUG", logger="datawhisper.mailer"):
+        mailer.send_verification_email("user@example.com", "tok123")
+    assert "tok123" not in caplog.text
+    assert "user@example.com" in caplog.text
+
+
+def test_a_failure_does_not_log_the_link_either(smtp, monkeypatch, caplog):
+    from app.core import mailer
+
+    def explode(self, message):
+        raise smtplib.SMTPServerDisconnected("gone")
+
+    monkeypatch.setattr(_FakeSMTP, "send_message", explode)
+    monkeypatch.setattr(settings, "APP_BASE_URL", "https://app.example.com")
+    with caplog.at_level("DEBUG", logger="datawhisper.mailer"):
+        mailer.send_verification_email("user@example.com", "tok123")
+    assert "tok123" not in caplog.text
+
+
+def test_the_password_is_never_logged(smtp, monkeypatch, caplog):
+    from app.core import mailer
+
+    def explode(self, message):
+        raise smtplib.SMTPServerDisconnected("gone")
+
+    monkeypatch.setattr(_FakeSMTP, "send_message", explode)
+    with caplog.at_level("DEBUG", logger="datawhisper.mailer"):
+        mailer.send_verification_email("user@example.com", "tok")
+    assert "hunter2" not in caplog.text
 
 
 def test_verification_link_uses_the_configured_origin(monkeypatch):
