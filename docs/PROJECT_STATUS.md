@@ -564,7 +564,8 @@ None are blocking, but they're the honest loose ends:
   but nothing has uploaded to a real deployment yet, so the sample is empty and
   the check still falls back to the assumed 100 B/row until 20 uploads land.
   Revisit the numbers once that endpoint has data. Nothing is reported to Stripe
-  as metered usage; the cap blocks work rather than adding to the bill.
+  as metered usage; the cap blocks work rather than adding to the bill — that
+  half is #31, and it stays open.
 
 ---
 
@@ -646,8 +647,26 @@ The difference is that when someone does, none of these will start with
     Seven deterministic repairs have now landed (#52, #58, #69, #73, #74, #59,
     #60) and **every prompt edit attempted has been reverted** — that is the
     pattern to plan around when the next defect turns up.
-12. Billing feature gaps — proration, dunning, invoices (#31). Explicitly
-    post-launch; **do not start before #19** proves the money path.
+12. Billing feature gaps (#31). ~~Invoice history~~ done 2026-08-13 — it was
+    the one piece that needed nothing from a live account. **Three remain, and
+    none of them should be started before #19 proves the money path:**
+
+    - **Metered usage.** `rows_processed` is capped per plan and never reported
+      to Stripe, so hitting the ceiling *blocks work* instead of adding to the
+      bill. That is a pricing decision before it is a feature, and the ceilings
+      themselves are still guesses (see "Known gaps").
+    - **Proration on plan switches.** Left entirely to Stripe's defaults, and
+      nobody has watched what those defaults do. `PUT /api/usage/plan` refuses
+      when Stripe is configured, so every switch already goes through Checkout
+      or the portal — which means this cannot be specified from the code, only
+      observed against a real subscription.
+    - **Dunning.** Configured in the Stripe dashboard, not here. The code half
+      already exists and is correct: `past_due` keeps the paid plan
+      (`ENTITLED_STATUSES`), only `canceled`/`unpaid` drop to free. What is
+      missing is the retry schedule and the mails, which are Stripe's to set.
+
+    The common blocker is not effort — it is that all three are designed against
+    behaviour nobody has seen yet.
 
 ### Conventions worth keeping
 
