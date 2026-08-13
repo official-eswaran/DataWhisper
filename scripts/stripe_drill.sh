@@ -60,7 +60,11 @@ export SECRET_KEY="${SECRET_KEY:-$(head -c 32 /dev/urandom | od -An -tx1 | tr -d
 export STRIPE_WEBHOOK_SECRET="${STRIPE_WEBHOOK_SECRET:-whsec_drill_$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')}"
 # Billing must be *enabled* for the webhook route to exist, so a key is always
 # set. In webhook-only mode nothing ever calls out with it.
-export STRIPE_SECRET_KEY="${STRIPE_SECRET_KEY:-sk_test_drill_placeholder}"
+#
+# Alphanumeric after the prefix on purpose: stripe-mock rejects anything that is
+# not a "valid looking testmode secret API key" with a 401, and an underscore in
+# the body of the key is enough to fail that check.
+export STRIPE_SECRET_KEY="${STRIPE_SECRET_KEY:-sk_test_drillplaceholder000000000000}"
 export STRIPE_PRICE_PRO="${STRIPE_PRICE_PRO:-price_drill_pro}"
 export STRIPE_SUCCESS_URL="${STRIPE_SUCCESS_URL:-https://example.invalid/billing/success}"
 export STRIPE_CANCEL_URL="${STRIPE_CANCEL_URL:-https://example.invalid/billing/cancel}"
@@ -94,7 +98,7 @@ fixture webhooks "${base_url}" "${STRIPE_WEBHOOK_SECRET}"
 if [[ -n "${STRIPE_API_BASE:-}" ]]; then
     log "Outbound SDK calls against stripe-mock (${STRIPE_API_BASE})"
     fixture api
-elif [[ "${STRIPE_SECRET_KEY}" == sk_test_* && "${STRIPE_SECRET_KEY}" != sk_test_drill_placeholder ]]; then
+elif [[ "${STRIPE_SECRET_KEY}" == sk_test_* && "${STRIPE_SECRET_KEY}" != sk_test_drillplaceholder000000000000 ]]; then
     log "Outbound SDK calls against live Stripe test mode"
     fixture api
 else
