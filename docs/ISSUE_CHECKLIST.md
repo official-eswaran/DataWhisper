@@ -556,13 +556,33 @@ items in the project despite sitting below Track A here.
 ### `#18` / `#5` — Restore drill + production hours (P0)
 
 - [ ] **Done** (not a PR — an executed drill with recorded numbers)
+- [x] **Groundwork merged** — 2026-08-13. `scripts/restore_drill.sh` runs
+  `backup.sh` → destroy → `restore.sh` → verify against a throwaway database and
+  data directory, in both Postgres and SQLite modes, and CI runs both on every
+  PR against a Postgres service container.
 
-`scripts/restore.sh` and `DISASTER_RECOVERY.md` exist and have never been
+`DISASTER_RECOVERY.md` exists and the **production** drill has still never been
 executed. RPO ≤ 15 min / RTO ≤ 1 h are assertions, not measurements. **An
 untested backup is not a backup** — the single highest-risk open item.
 
-**Unblocked by** provisioned infra (`deploy/terraform`), per
-`GO_LIVE_CHECKLIST.md` steps 1–9.
+**What the groundwork changed:** the scripts themselves had never run either,
+which meant a real recovery would have been the first execution of
+`restore.sh` — during an outage. That is no longer true. The drill fails if the
+round trip loses an org, its owner, an audit entry, a hash-chain link, or a byte
+of a dataset file; it also checks that `restore.sh` refuses without `--yes` and
+aborts on a tampered archive.
+
+**The step that makes the rest mean anything is `assert-destroyed`.** Without
+it a restore that silently did nothing would pass a seed→verify pair, because
+the state never left. Seven deliberate breakages of the drill were checked
+against it — including an audit entry edited after the restore — and all seven
+made it fail.
+
+**Still unblocked only by** provisioned infra (`deploy/terraform`), per
+`GO_LIVE_CHECKLIST.md` steps 1–9. The drill says nothing about PITR,
+cross-region recovery, or the real RTO; its fixture is a dozen rows and it
+finishes in about two seconds. The quarterly checklist in
+`DISASTER_RECOVERY.md` now names exactly what to record when the real one runs.
 
 ### `#25` — k6 against real staging (P0)
 

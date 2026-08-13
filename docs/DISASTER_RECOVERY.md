@@ -77,6 +77,44 @@ without `--yes`.
 - [ ] Metrics scrape (`/metrics`) shows traffic; error rate nominal
 
 ## Testing
-Perform a **restore drill** into a staging environment quarterly. Record the
-measured RTO and any deviation from this runbook. A backup that has never been
-restored is not a backup.
+
+### Automated, every commit (#18)
+
+```bash
+./scripts/restore_drill.sh                    # SQLite path
+DRILL_DATABASE_URL=postgresql+psycopg://user:pass@host:5432/scratch \
+  ./scripts/restore_drill.sh                  # the path production uses
+```
+
+`scripts/restore_drill.sh` runs `backup.sh` → destroy → `restore.sh` → verify
+against a throwaway database and data directory, and CI runs it in both modes on
+every PR. It **proves**: the archive restores; the org, its owner and the audit
+hash chain survive (the chain is re-verified, which is the headline check in the
+list above); dataset files come back byte-identical; `restore.sh` refuses
+without `--yes` and aborts on a tampered archive.
+
+The step that makes the rest mean anything is `assert-destroyed`: the drill
+fails unless the destruction really destroyed something, so a restore that
+silently did nothing cannot pass. Seven deliberate breakages were checked
+against it, including an audit entry edited after the restore.
+
+**It does not replace the drill below.** It says nothing about PITR, about
+cross-region recovery, or about the real RTO — its fixture is a dozen rows and
+it completes in about two seconds.
+
+### Manual, quarterly
+
+Perform a **restore drill** into a staging environment quarterly, following the
+procedures above rather than the script. Record:
+
+- [ ] **Measured RTO** — wall clock from "decision to restore" to
+      `/health/ready` returning 200, not just the `restore.sh` runtime
+- [ ] **Measured RPO** — the gap between the last recoverable write and the
+      incident, which is the number the ≤ 15 min target actually refers to
+- [ ] **Backup age and size** at the moment of restore
+- [ ] Every deviation from this runbook, however small — a step that needed a
+      command not written here is a defect in the runbook
+- [ ] The post-restore verification checklist above, item by item
+
+A backup that has never been restored is not a backup. As of 2026-08-13 the
+production drill has **still never been run** — only the scripts have been.
