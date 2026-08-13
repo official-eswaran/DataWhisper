@@ -640,8 +640,37 @@ still blind.
 ### `#21` (second half) — email/captcha infrastructure
 
 - [ ] **Done**
+- [x] **Transport implemented** — 2026-08-13. `app/core/mailer.py` sends over
+  SMTP (STARTTLS on 587, implicit TLS on 465). Only credentials are missing.
 
 The deferred half of Track A item 3. Needs an SMTP provider or hCaptcha account.
+
+**What changed:** the seam is no longer a stub. `SMTP_HOST` unset still logs and
+sends nothing — dev, the suite and self-hosted installs are untouched — and a
+configured host now delivers. Three rules the transport keeps, in the order they
+would cost to get wrong:
+
+1. **Credentials never cross an unencrypted link.** STARTTLS off, or a server
+   that does not offer it, means the send is abandoned rather than attempted. A
+   mail that does not arrive is a support ticket; a leaked SMTP password is
+   somebody phishing as you.
+2. **Nothing raises.** Registration has already committed when this runs.
+3. **The link is not logged once a transport exists.** It is a bearer credential
+   for the account; the log line is the delivery mechanism only while there is
+   no other one.
+
+13 of 13 mutants killed, including all three of those.
+
+**Still open, and it is the important half:** nothing has sent to a real server.
+The check to run once an account exists is in `GO_LIVE_CHECKLIST.md` §3 —
+`sent: True` plus a mail in the inbox — followed by the flow test, which is not
+the same thing. hCaptcha remains entirely unstarted.
+
+**Also unaddressed:** the send is synchronous inside the register handler, so a
+slow mail server delays signup by up to `SMTP_TIMEOUT_SECONDS` (default 10).
+Registration is rate-limited to 5/hour/IP so the blast radius is small, but
+moving it off the request path is the obvious next step if a real provider turns
+out to be slow.
 
 ---
 
