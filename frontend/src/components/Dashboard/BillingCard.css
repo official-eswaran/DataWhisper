@@ -71,3 +71,40 @@
     width: 100%;
   }
 }
+
+/* Billing history (#31). Read-only table; the Stripe-hosted invoice pages are
+   the source of truth, so this only has to be scannable. */
+.billing-invoices {
+  margin-top: 20px;
+  border-top: 1px solid var(--border, #e5e7eb);
+  padding-top: 16px;
+}
+
+.billing-invoices h4 {
+  margin: 0 0 10px;
+  font-size: 0.95rem;
+}
+
+.billing-invoice-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.billing-invoice-table th,
+.billing-invoice-table td {
+  text-align: left;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border, #e5e7eb);
+}
+
+.billing-invoice-table th {
+  font-weight: 600;
+  opacity: 0.7;
+}
+
+.billing-invoice-table a {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}

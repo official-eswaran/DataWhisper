@@ -540,3 +540,178 @@ def test_a_tampered_body_is_rejected_after_signing(client, signed_webhooks):
     )
     assert r.status_code == 400
     assert get_org_billing(org_id)["plan"] == "free"
+
+
+# ── Invoice history (#31) ─────────────────────────────────────────────────────
+#
+# Read-only, and deliberately a projection rather than a passthrough: a Stripe
+# invoice carries a hundred-odd fields including the full customer object, and
+# forwarding them would leak more than the page shows while tying the frontend
+# to Stripe's schema.
+
+
+def _stripe_invoice(**overrides):
+    invoice = {
+        "id": "in_1",
+        "object": "invoice",
+        "number": "DW-0001",
+        "status": "paid",
+        "amount_due": 2900,
+        "amount_paid": 2900,
+        "currency": "USD",
+        "created": 1_760_000_000,
+        "hosted_invoice_url": "https://invoice.stripe.com/i/1",
+        "invoice_pdf": "https://invoice.stripe.com/i/1.pdf",
+        # Fields the projection must drop rather than forward.
+        "customer_email": "owner@example.com",
+        "customer": {"id": "cus_1", "name": "Acme"},
+        "lines": {"data": [{"description": "Pro plan"}]},
+    }
+    invoice.update(overrides)
+    return invoice
+
+
+def _stub_invoice_list(monkeypatch, invoices, capture=None):
+    class _Invoice:
+        @staticmethod
+        def list(**kwargs):
+            if capture is not None:
+                capture.update(kwargs)
+            return {"object": "list", "data": invoices}
+
+    monkeypatch.setattr(billing, "_client", lambda: type("S", (), {"Invoice": _Invoice}))
+
+
+def test_an_org_without_a_customer_has_no_invoices(monkeypatch, prices):
+    """A free org that never checked out. Not an error — the normal state."""
+    _enable(monkeypatch)
+    org_id = _new_org()
+
+    def explode():
+        raise AssertionError("Stripe must not be called for an org with no customer")
+
+    monkeypatch.setattr(billing, "_client", explode)
+    assert billing.list_invoices(org_id) == []
+
+
+def test_invoices_are_projected_not_forwarded(monkeypatch, prices):
+    _enable(monkeypatch)
+    org_id = _new_org()
+    set_org_billing(org_id, customer_id="cus_1")
+    _stub_invoice_list(monkeypatch, [_stripe_invoice()])
+
+    (invoice,) = billing.list_invoices(org_id)
+
+    assert invoice == {
+        "id": "in_1",
+        "number": "DW-0001",
+        "status": "paid",
+        "amount_due": 2900,
+        "amount_paid": 2900,
+        "currency": "usd",
+        "created": 1_760_000_000,
+        "hosted_invoice_url": "https://invoice.stripe.com/i/1",
+        "invoice_pdf": "https://invoice.stripe.com/i/1.pdf",
+    }
+    # The exact assertion above is the point: anything Stripe adds later has to
+    # be let through deliberately rather than arriving by default.
+    assert "customer_email" not in invoice
+    assert "lines" not in invoice
+
+
+def test_amounts_stay_in_minor_units(monkeypatch, prices):
+    """Dividing by 100 here would be wrong for zero-decimal currencies, and the
+    formatting belongs where the locale is known."""
+    _enable(monkeypatch)
+    org_id = _new_org()
+    set_org_billing(org_id, customer_id="cus_1")
+    _stub_invoice_list(monkeypatch, [_stripe_invoice(amount_paid=2900, currency="jpy")])
+
+    (invoice,) = billing.list_invoices(org_id)
+    assert invoice["amount_paid"] == 2900
+    assert invoice["currency"] == "jpy"
+
+
+def test_a_draft_invoice_survives_its_missing_fields(monkeypatch, prices):
+    """Drafts have no number and no hosted pages. Rendering a dead link is worse
+    than rendering none, so the projection must not invent them."""
+    _enable(monkeypatch)
+    org_id = _new_org()
+    set_org_billing(org_id, customer_id="cus_1")
+    _stub_invoice_list(
+        monkeypatch,
+        [_stripe_invoice(status="draft", number=None, hosted_invoice_url=None, invoice_pdf=None)],
+    )
+
+    (invoice,) = billing.list_invoices(org_id)
+    assert invoice["number"] == ""
+    assert invoice["hosted_invoice_url"] == ""
+    assert invoice["invoice_pdf"] == ""
+
+
+def test_only_the_orgs_own_invoices_are_requested(monkeypatch, prices):
+    """The customer id comes from the org row, so one org cannot list another's."""
+    _enable(monkeypatch)
+    org_id = _new_org()
+    set_org_billing(org_id, customer_id="cus_mine")
+    captured = {}
+    _stub_invoice_list(monkeypatch, [], capture=captured)
+
+    billing.list_invoices(org_id)
+    assert captured["customer"] == "cus_mine"
+
+
+def test_the_page_size_is_bounded(monkeypatch, prices):
+    """Stripe caps `limit` at 100 and errors above it; clamp rather than pass
+    through whatever a caller asks for."""
+    _enable(monkeypatch)
+    org_id = _new_org()
+    set_org_billing(org_id, customer_id="cus_1")
+    captured = {}
+    _stub_invoice_list(monkeypatch, [], capture=captured)
+
+    billing.list_invoices(org_id, limit=5000)
+    assert captured["limit"] == 100
+    billing.list_invoices(org_id, limit=0)
+    assert captured["limit"] == 1
+
+
+def test_invoice_route_is_owner_only(client, manager_token, monkeypatch):
+    _enable(monkeypatch)
+    r = client.get(
+        "/api/billing/invoices", headers={"Authorization": f"Bearer {manager_token}"}
+    )
+    assert r.status_code == 403
+
+
+def test_invoice_route_503_when_billing_is_off(client, admin_token):
+    r = client.get(
+        "/api/billing/invoices", headers={"Authorization": f"Bearer {admin_token}"}
+    )
+    assert r.status_code == 503
+
+
+def test_invoice_route_returns_the_list(client, admin_token, monkeypatch):
+    _enable(monkeypatch)
+    monkeypatch.setattr(billing, "list_invoices", lambda org_id: [{"id": "in_1"}])
+    r = client.get(
+        "/api/billing/invoices", headers={"Authorization": f"Bearer {admin_token}"}
+    )
+    assert r.status_code == 200
+    assert r.json() == {"invoices": [{"id": "in_1"}]}
+
+
+def test_a_stripe_outage_is_a_502_not_a_500(client, admin_token, monkeypatch):
+    """Stripe being unreachable is not this application failing, and the message
+    has to tell the user to retry rather than reading as data loss."""
+    _enable(monkeypatch)
+
+    def unreachable(org_id):
+        raise RuntimeError("connection reset")
+
+    monkeypatch.setattr(billing, "list_invoices", unreachable)
+    r = client.get(
+        "/api/billing/invoices", headers={"Authorization": f"Bearer {admin_token}"}
+    )
+    assert r.status_code == 502
+    assert "try again" in r.json()["detail"].lower()

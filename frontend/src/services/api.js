@@ -239,6 +239,11 @@ export const startCheckout = (plan) => API.post("/billing/checkout", { plan });
 
 export const openBillingPortal = () => API.post("/billing/portal");
 
+// Owner-only, and empty for an org that never checked out. Amounts come back in
+// the currency's minor unit (cents), as Stripe reports them — formatting is the
+// UI's job because that is where the locale is known (#31).
+export const getInvoices = () => API.get("/billing/invoices");
+
 // ── Account / GDPR (self-service) ───────────────────────────────────────────
 export const exportMyData = () => API.get("/me/export");
 

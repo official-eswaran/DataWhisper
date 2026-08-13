@@ -41,9 +41,9 @@ export default defineConfig({
         // assert that the render tests don't already cover.
         "src/index.jsx",
       ],
-      // A floor, not a target. Measured on 2026-08-13 with `ErrorBoundary`
-      // covered — the last of the twelve: 91.59 statements / 94.25 branches /
-      // 71.28 functions / 91.59 lines.
+      // A floor, not a target. Measured on 2026-08-13 with invoice history
+      // (#31) added: 91.97 statements / 94.36 branches / 71.42 functions /
+      // 91.97 lines.
       //
       // **Set just under measured, and verify the gate bites (#70).** These sit
       // ~0.4 under rather than the "few points" the original #27 gate used,
@@ -71,10 +71,10 @@ export default defineConfig({
       // through other suites — what was missing was any assertion about the
       // result. Statements and functions are what bite.
       thresholds: {
-        statements: 91,
+        statements: 91.5,
         branches: 94,
         functions: 71,
-        lines: 91,
+        lines: 91.5,
       },
     },
   },
