@@ -1,6 +1,6 @@
 # Project status & how to resume
 
-**Last updated:** 2026-08-13
+**Last updated:** 2026-08-16
 **Branch of record:** `main`.
 
 > ⚠️ **`master` is not the branch of record and does not exist on the remote.**
@@ -39,9 +39,9 @@ finished.
 
 | Area | State |
 |------|-------|
-| Backend tests | **690 passing**, `ruff` clean, **90.49%** coverage, gate **85** (#28) |
+| Backend tests | **727 passing**, `ruff` clean, **91%** coverage, gate **85** (#28) |
 | NL2SQL accuracy | **98.2%** (3 repeats, cache off); 6 of 8 at 100%, no case failing every run |
-| Frontend tests | **287 passing**, **all 12 components covered**; gate **91.5/94/71/91.5** (#27, #70) |
+| Frontend tests | **314 passing**, **all 13 components covered**; gate **92.4/93.2/73.9/92.4** (#27, #70, #21) |
 | Build/runtime | Vite build OK, Node 24 (LTS), dependency audit clean |
 | E2E | Runs in GitHub Actions ✅; passes on attempt 1 since PR #63 (#45 fixed) |
 | Migrations | Head is `b92c4d17ae03` (email verification, #21) |
@@ -64,6 +64,14 @@ finished.
 | #13 | #6 | Per-tenant quotas + usage metering (`/api/usage`) |
 | #14 | #7, #8 | Frontend CRA→Vite, code-splitting, a11y, admin console + onboarding UI |
 | — | #5 (part) | Stripe billing: hosted Checkout + Portal + webhooks ([BILLING.md](BILLING.md)) |
+
+### Shipped 2026-08-16
+
+| Issue | What |
+|-------|------|
+| #21 | **The signup captcha is implemented — only credentials are missing now.** The last piece of #21 that did not need an account, and the one the file has called "entirely unstarted" since 08-06. `CAPTCHA_SECRET` unset is still a no-op, so dev, tests and self-hosted installs are unchanged; set a key pair and `/api/auth/register` will not create an org without a solved challenge. hCaptcha and Turnstile share one implementation. **It fails closed**: a provider that times out gets a 503 and no organization, because a control that opens when it cannot be evaluated is not a control — and that state is precisely what an attacker would manufacture. A *failed* challenge is a 400, kept distinct because the two ask different things of the user. 19 of 19 mutants killed. **No challenge has ever been solved against a real provider**; `GO_LIVE_CHECKLIST.md` §3 has the checks. |
+| #21 | **`CaptchaWidget` covered — the thirteenth component, 100% on all four metrics.** 18 tests, suite 287 → 314. The two that earned their place: a failed *signup* (not a failed captcha) must reset the widget, because the token is single-use and a user fixing a duplicate username would otherwise resubmit a spent one and be told the captcha failed; and a script that never loads says so, rather than leaving an empty box above a permanently disabled button — ad blockers block these routinely. |
+| — | **The frontend `branches` gate went DOWN, and nothing regressed.** 94.36 → 93.65 while statements, functions and lines all rose. v8 reports branch data only for functions it actually enters, so `services/api.js` had **6** counted branches (5 covered, 83.33%); adding one exported function that tests do execute made v8 report the file's other blocks too — **17** counted, 9 covered, 52.94%. Eleven uncovered branches appeared that had been there all along. **A branch percentage is only comparable between runs over identical code**, which makes it the weakest of the four as a ratchet. The other three were raised to ~0.4 under measured as usual, and the gate was verified to bite. |
 
 ### Shipped 2026-08-13
 
@@ -152,14 +160,14 @@ finished.
 ```bash
 # Backend (from backend/)
 export SECRET_KEY=$(python3 -c 'import secrets;print(secrets.token_hex(32))') DEBUG=true
-python3 -m pytest                       # expect 690 passed
+python3 -m pytest                       # expect 727 passed
 python3 -m ruff check app tests evals   # expect clean
 python3 -m pip_audit -r requirements.txt --strict   # --strict is what CI runs
 
 # Frontend (from frontend/)
 npm ci
 npm run build                           # outputs to build/
-npm test                                # expect 287 passed; enforces coverage thresholds
+npm test                                # expect 314 passed; enforces coverage thresholds
 npm audit --omit=dev                    # see the allowlist note in ci.yml
 ```
 
@@ -252,6 +260,20 @@ Things that are easy to miss when reading the code cold:
   unknown accounts (no enumeration oracle). `app/core/mailer.py` is a no-op that
   logs unless `SMTP_HOST` is set — and if it *is* set with no transport
   implemented, it logs an error rather than silently stranding users.
+- **The signup captcha fails closed, and that is deliberate (issue #21).**
+  `app/core/captcha.py` is off unless `CAPTCHA_SECRET` is set — keyed on the
+  *secret*, because a site key alone would draw a widget whose answer nobody
+  checks. When it is on and the provider cannot be reached, `/register` returns
+  **503 and creates nothing**; a rejected challenge returns **400**. The two are
+  kept apart because they ask different things of the user, and the 503 is the
+  half that matters: an abuse control that opens when it cannot be evaluated is
+  not a control, and "the provider is unreachable" is a state an attacker can
+  manufacture. Set both keys or neither — the startup check warns about either
+  half alone, and the secret-only case closes signup completely. hCaptcha and
+  Turnstile share the siteverify contract, so `PROVIDERS` is a table rather than
+  two code paths. The SPA gets the site key from `GET /api/auth/signup-config`
+  instead of a build-time var, and holds its own provider → script map so a
+  misconfigured API cannot name JavaScript for it to load.
 - **Demo accounts don't seed in production.** `init_db` seeds `ceo`/`manager`
   only when `settings.should_seed_demo` — which follows `DEBUG` unless
   `SEED_DEMO_DATA` is set (issue #23). So dev/test get the demo org and prod
@@ -338,13 +360,23 @@ None are blocking, but they're the honest loose ends:
   no longer pays model load, and `retries` is now `0` so attempt 1 must pass on
   its own. Whether cold inference is *supposed* to be this slow is still #25's
   question, answered against real staging, not a shared runner.
-- ~~**Open signup has no verification (#21)**~~ — **half fixed** 2026-08-06.
-  Queries now require a confirmed address (`REQUIRE_EMAIL_VERIFICATION`,
-  auto-on when `DEBUG=false`), gated per-org on the owner. **The deferred half
-  is real and still open:** there is no mail transport, so with `SMTP_HOST`
-  unset the verification link is only ever written to the log. Fine for
-  self-hosting, *not* fine for a public signup flow — wiring SMTP/a provider (or
-  hCaptcha instead) is Track B and needs an account.
+- ~~**Open signup has no verification (#21)**~~ — **the code is complete as of
+  2026-08-16; only accounts are missing.** Queries require a confirmed address
+  (`REQUIRE_EMAIL_VERIFICATION`, auto-on when `DEBUG=false`, gated per-org on
+  the owner, 08-06); mail is really sent when `SMTP_HOST` is set (08-13); and a
+  configured captcha is really verified (08-16). All three default to off, so a
+  self-hosted install is unchanged by any of them.
+
+  **Verification and captcha are not alternatives — they price different
+  things.** A verified address puts a cost on each *identity*; a captcha puts
+  one on each *attempt*. The abuse path is "make another org", which needs both
+  a fresh address and a fresh attempt, so a deployment with public signup should
+  run both. Neither replaces `RATE_LIMIT_REGISTER`, which is the only one of the
+  three that costs an attacker nothing to defeat but also costs nothing to run.
+
+  **Still open, and it is the same blocker for both halves:** nothing has sent
+  to a real mail server, and no challenge has been solved against a real
+  provider.
 - ~~**No frontend coverage gate (#27)**~~ — **gate fixed** 2026-08-06:
   `npm test` is `vitest run --coverage` with thresholds in `vite.config.js`,
   enforced locally and in CI. Now **64 statements / 90 branches / 56 functions /
@@ -358,11 +390,15 @@ None are blocking, but they're the honest loose ends:
   `ErrorBoundary` (08-13). Suite 94 → 270, overall coverage 63.72% →
   **91.59%**.
 
+  **`CaptchaWidget` (#21, 08-16) makes it thirteen**, on the same terms: 100%
+  on all four metrics, 18 tests, suite 287 → 314.
+
   **What is left below 100% is not a component.** `App.jsx` sits at 87.3% (the
-  boot/refresh path) and `services/api.js` at 51.62% — mostly thin wrappers
+  boot/refresh path) and `services/api.js` at 58.07% — mostly thin wrappers
   exercised through the components that call them. Neither was in #70's scope,
   and `api.js` is the honest next target for anyone wanting the number
-  higher.
+  higher — and now the *only* way to move `branches` back above 94, since it is
+  the file hiding the eleven branches that appeared on 08-16.
 
   **A raised gate is not automatically a ratchet, and this one wasn't.** Raising
   the thresholds by the original "a few points under measured" rule left the
@@ -616,6 +652,14 @@ end to end short of a real account, and a staging run can no longer silently
 measure the wrong thing. What is left in each is what only an environment can
 answer — PITR and a real RTO, a real Checkout, real hardware under load.
 
+> **This sentence was not true when it was written.** It was added on
+> 2026-08-13, the same day this file recorded elsewhere that "hCaptcha remains
+> entirely unstarted" — a piece of P1 #21 needing no account, no infrastructure
+> and no environment, sitting in the same document as a claim that no such work
+> remained. It was made true on 2026-08-16 by building it. The generalisable
+> version: **a summary sentence stops tracking the list it summarises the moment
+> the list changes**, and this file's summaries are the part to distrust first.
+
 **So the top of this list still has not moved since 2026-07-21, and will not
 until someone provisions something.** That is the honest state of the project.
 The difference is that when someone does, none of these will start with
@@ -625,11 +669,14 @@ The difference is that when someone does, none of these will start with
 
 5. ~~E2E cold-path flakiness (#45)~~ — done 2026-08-05 (PR #63).
 6. ~~Email verification on signup (#21)~~ — **gate done** 2026-08-06,
-   **transport done** 2026-08-13. Queries are gated and mail is really sent once
-   `SMTP_HOST` is set; the mailer refuses to authenticate over an unencrypted
-   connection, so a misconfiguration stops mail rather than leaking the
-   password. What remains is an account: nothing has sent to a real server, and
-   hCaptcha is untouched. `GO_LIVE_CHECKLIST.md` §3 has the check to run.
+   **transport done** 2026-08-13, **captcha done** 2026-08-16. Queries are gated,
+   mail is really sent once `SMTP_HOST` is set, and a configured captcha is
+   really verified. Both refuse rather than degrade: the mailer will not
+   authenticate over an unencrypted connection, and the captcha refuses a signup
+   it cannot verify. **Every part of #21 that does not need an account is now
+   built.** What remains is only the account: nothing has sent to a real mail
+   server and no challenge has been solved against a real provider.
+   `GO_LIVE_CHECKLIST.md` §3 has both sets of checks.
 
 **P2 — quality, cheap.** Each is roughly an hour.
 

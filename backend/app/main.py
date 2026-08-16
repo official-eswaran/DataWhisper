@@ -25,6 +25,7 @@ from app.api.routes import (
     usage,
     users,
 )
+from app.core.captcha import check_captcha_config
 from app.core.config import settings
 from app.core.database import (
     cleanup_stale_sessions,
@@ -70,6 +71,7 @@ async def lifespan(app: FastAPI):
     init_db()
     check_limits_are_reachable()  # warns if a plan's row cap rejects big uploads
     check_shared_state()          # warns (or refuses) if prod has no shared Redis
+    check_captcha_config()        # warns if half a captcha key pair is set
     logger.info("DataWhisper started — model: %s", settings.LLM_MODEL)
     task = asyncio.create_task(_cleanup_loop())
     try:

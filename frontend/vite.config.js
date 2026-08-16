@@ -41,9 +41,25 @@ export default defineConfig({
         // assert that the render tests don't already cover.
         "src/index.jsx",
       ],
-      // A floor, not a target. Measured on 2026-08-13 with invoice history
-      // (#31) added: 91.97 statements / 94.36 branches / 71.42 functions /
-      // 91.97 lines.
+      // A floor, not a target. Measured on 2026-08-16 with the signup captcha
+      // (#21) added: 92.84 statements / 93.65 branches / 74.33 functions /
+      // 92.84 lines.
+      //
+      // **`branches` went DOWN (94.36 → 93.65) while nothing lost cover** —
+      // read this before treating it as a regression. v8 reports branch data
+      // only for functions it actually entered, so branches inside never-run
+      // code are not in the denominator at all. `services/api.js` had 6
+      // counted branches (5 covered = 83.33%); adding one exported function
+      // that tests do execute — `getSignupConfig` — made v8 report the file's
+      // other blocks too, and it now shows 17 counted branches with 9 covered
+      // (52.94%). Eleven uncovered branches appeared that were always there.
+      // Statements, functions and lines all rose in the same run.
+      //
+      // The lesson generalises past this PR: **this metric's denominator moves
+      // when execution reaches new code**, so a branch percentage is only
+      // comparable between runs over identical code. Covering `api.js` — the
+      // file that hid them, and already named below as the honest next target —
+      // is what takes this back above 94.
       //
       // **Set just under measured, and verify the gate bites (#70).** These sit
       // ~0.4 under rather than the "few points" the original #27 gate used,
@@ -61,20 +77,19 @@ export default defineConfig({
       // fail only when coverage genuinely drops, which is the intent. New
       // uncovered code must come with tests or move the gate deliberately.
       //
-      // **All twelve components are covered as of 2026-08-13 (#70).** What is
-      // left below 100% is `App.jsx` (the boot/refresh path) and `services/
-      // api.js` (51.62%, mostly thin wrappers exercised through the components
-      // that call them) — neither is a component, and neither is in #70.
+      // **All thirteen components are covered as of 2026-08-16** — the twelve
+      // from #70 plus `CaptchaWidget` (#21), each at 100% on all four metrics.
+      // What is left below 100% is `App.jsx` (the boot/refresh path) and
+      // `services/api.js` (58.07%, mostly thin wrappers exercised through the
+      // components that call them) — neither is a component.
       //
-      // `branches` stays at 94: the last two components moved it by 0.18
-      // between them, because their branches were already being *taken*
-      // through other suites — what was missing was any assertion about the
-      // result. Statements and functions are what bite.
+      // Statements and functions are what bite; branches is carried by the
+      // whole suite and, per the note above, is not a stable ratchet.
       thresholds: {
-        statements: 91.5,
-        branches: 94,
-        functions: 71,
-        lines: 91.5,
+        statements: 92.4,
+        branches: 93.2,
+        functions: 73.9,
+        lines: 92.4,
       },
     },
   },

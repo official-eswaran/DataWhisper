@@ -92,6 +92,25 @@
   opacity: 0.6;
 }
 
+/* Signup captcha (issue #21). Only rendered when a provider is configured. */
+.login-hint {
+  display: block;
+  margin-top: 8px;
+  color: var(--text-muted);
+  font-size: 12px;
+  text-align: center;
+}
+
+.captcha-error {
+  margin: 4px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--danger, #e5484d);
+  border-radius: 6px;
+  color: var(--danger, #e5484d);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
 .login-footer {
   display: flex;
   align-items: center;

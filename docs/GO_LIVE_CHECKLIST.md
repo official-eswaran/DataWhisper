@@ -75,6 +75,41 @@ links go to the log — fine for a private install, **not** for public signup.
       follow the link, confirm the account can query. The gate is per-org keyed
       on the *owner*, so test with a fresh org rather than an existing one.
 
+### Signup captcha (#21)
+
+The other half of the same abuse path, and independent of mail: verification
+puts a cost on each *identity*, a captcha puts one on each *signup attempt*.
+Unset, there is no challenge — the default, and unchanged for self-hosting.
+
+- [ ] Create an [hCaptcha](https://www.hcaptcha.com/) or
+      [Cloudflare Turnstile](https://developers.cloudflare.com/turnstile/) site.
+      Both speak the same siteverify contract; `CAPTCHA_PROVIDER` picks which.
+- [ ] `CAPTCHA_SITE_KEY` in config (it is public — the page renders it),
+      `CAPTCHA_SECRET` in the Secret
+- [ ] **Set both or neither.** Only the secret → the widget cannot render and
+      *every signup is refused*. Only the site key → a challenge is shown and
+      its answer never checked. The app logs a warning at startup for both,
+      which is the first thing to check if signup breaks after enabling this.
+- [ ] **Verify — no challenge has ever been solved against a real provider:**
+
+      ```bash
+      curl -s https://your-domain/api/auth/signup-config | jq
+      ```
+
+      Expect `captcha.site_key` to match the dashboard and `captcha.provider` to
+      be right. The secret must **not** appear — if it does, stop and check
+      which variable was set where.
+
+- [ ] **Then verify the flow:** load `/signup` in a browser, confirm the widget
+      renders and the submit button stays disabled until it is solved, and
+      complete a real registration. Then submit with a tampered token (edit it
+      in devtools) and confirm the API answers **400**, not 201.
+- [ ] **Verify it fails closed:** block the provider's domain at the firewall
+      and confirm registration returns **503** rather than succeeding. This is
+      the property worth checking by hand — an abuse control that opens when the
+      provider is unreachable is not a control, and it is the failure mode that
+      would go unnoticed.
+
 ## 4. Database migration
 
 - [ ] Build and push images (backend + frontend) to your registry; update the

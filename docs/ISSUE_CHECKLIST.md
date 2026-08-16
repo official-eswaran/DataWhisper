@@ -642,8 +642,56 @@ still blind.
 - [ ] **Done**
 - [x] **Transport implemented** — 2026-08-13. `app/core/mailer.py` sends over
   SMTP (STARTTLS on 587, implicit TLS on 465). Only credentials are missing.
+- [x] **Captcha implemented** — 2026-08-16. `app/core/captcha.py` verifies
+  against hCaptcha or Turnstile. Only credentials are missing.
 
 The deferred half of Track A item 3. Needs an SMTP provider or hCaptcha account.
+
+**Captcha, 2026-08-16.** `CAPTCHA_SECRET` unset is still the default and still
+challenges nothing, so dev, the suite and self-hosted installs are untouched.
+Set a key pair and `/register` will not create an org without a solved
+challenge. hCaptcha and Turnstile share one implementation — the siteverify
+contract is identical — so a third provider of that shape is one row in
+`PROVIDERS`. 19 of 19 mutants killed.
+
+Four rules, in the order they would cost to get wrong:
+
+1. **An unverifiable signup is refused (503), not allowed.** A control that
+   opens when the provider is unreachable is not a control, and that state is
+   exactly what an attacker would manufacture if failing open bought them
+   unlimited orgs. Distinct from a *failed* challenge (400) because the two ask
+   different things of the user.
+2. **The secret never crosses an unencrypted link.** A non-https verify URL is
+   refused before the request is built — the mailer's rule.
+3. **Neither credential reaches the log.** Provider error codes are kept;
+   they debug the problem without carrying the secret or the token.
+4. **A half-set key pair is warned about at startup.** Secret without site key
+   closes signup entirely; site key without secret shows a challenge nobody
+   checks. Both run happily and nothing else would say so.
+
+**The site key is served by `GET /api/auth/signup-config`, not baked into the
+bundle.** A `VITE_CAPTCHA_SITE_KEY` would be a second copy of the same setting,
+in a different file, free to disagree with the secret the server verifies
+against and needing a rebuild to change. The response carries no script URL
+either — the SPA holds its own provider → script map, so a misconfigured API
+cannot make it load arbitrary JavaScript.
+
+**Two things found while building it, both worth keeping:**
+
+- **The token is single-use, so any failed signup must reset the widget** — not
+  just a captcha failure. A user who hits a duplicate-username 409 and fixes it
+  would otherwise resubmit a spent token and be told the captcha failed, for a
+  challenge they solved correctly.
+- **The backend's CSP does not govern the SPA.** `default-src 'self'` looked
+  like it would block the widget outright; it is set by the API middleware and
+  only ever lands on JSON responses. nginx serves the SPA with no CSP at all
+  (`frontend/nginx.conf`), and `index.html` has no meta CSP. Nothing needed
+  changing — but if a CSP is ever added there, the provider's script and frame
+  origins have to be allowed or signup breaks with an empty box.
+
+**Still open:** no challenge has ever been solved against a real provider.
+`GO_LIVE_CHECKLIST.md` §3 has the checks, including the one that matters most —
+block the provider and confirm registration returns 503 rather than succeeding.
 
 **What changed:** the seam is no longer a stub. `SMTP_HOST` unset still logs and
 sends nothing — dev, the suite and self-hosted installs are untouched — and a
@@ -664,7 +712,7 @@ would cost to get wrong:
 **Still open, and it is the important half:** nothing has sent to a real server.
 The check to run once an account exists is in `GO_LIVE_CHECKLIST.md` §3 —
 `sent: True` plus a mail in the inbox — followed by the flow test, which is not
-the same thing. hCaptcha remains entirely unstarted.
+the same thing.
 
 **Also unaddressed:** the send is synchronous inside the register handler, so a
 slow mail server delays signup by up to `SMTP_TIMEOUT_SECONDS` (default 10).

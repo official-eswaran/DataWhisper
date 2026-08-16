@@ -1,13 +1,38 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import toast from "react-hot-toast";
 import { FiBriefcase, FiDatabase, FiLock, FiMail, FiUser } from "react-icons/fi";
-import { register } from "../../services/api";
+import { getSignupConfig, register } from "../../services/api";
+import CaptchaWidget from "./CaptchaWidget";
 import "./Login.css";
 
 function Signup({ onLogin }) {
   const [form, setForm] = useState({ org: "", username: "", email: "", password: "" });
   const [loading, setLoading] = useState(false);
+  // null until the server answers, and null forever on a deployment with no
+  // provider — which is the default and every existing install (issue #21).
+  const [captcha, setCaptcha] = useState(null);
+  const [captchaToken, setCaptchaToken] = useState("");
+  const [captchaNonce, setCaptchaNonce] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    getSignupConfig()
+      .then((res) => {
+        // No optional chaining on `res.data`: a response without a body is not
+        // a case worth a branch nothing covers — it throws, the catch below
+        // takes it, and the form is left usable, which is the same outcome.
+        if (!cancelled) setCaptcha(res.data.captcha ?? null);
+      })
+      // A failed config fetch leaves the form usable without a challenge. The
+      // server is the thing that enforces this, and it will reject a tokenless
+      // signup with a message saying so — showing no widget and letting the
+      // attempt fail is better than blocking signup on a transient GET.
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const update = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
 
@@ -15,7 +40,13 @@ function Signup({ onLogin }) {
     e.preventDefault();
     setLoading(true);
     try {
-      const res = await register(form.org, form.username, form.email, form.password);
+      const res = await register(
+        form.org,
+        form.username,
+        form.email,
+        form.password,
+        captchaToken
+      );
       onLogin(res.data); // register returns tokens — log straight in
       toast.success("Organization created — welcome to DataWhisper!");
     } catch (err) {
@@ -31,11 +62,26 @@ function Signup({ onLogin }) {
         toast.error("Public signup is closed on this deployment");
       } else if (status === 429) {
         toast.error("Too many signups from this network. Please try again later.");
+      } else if (status === 400) {
+        toast.error("Captcha verification failed — please try the challenge again");
+      } else if (status === 503) {
+        toast.error("Signup is temporarily unavailable. Please try again in a moment.");
       } else toast.error("Could not create your account");
+
+      // Every failure path, not just the captcha ones. The token was spent by
+      // the attempt — the server consumes it whether the rest of the request
+      // succeeded or not — so a resubmit with the same token is refused for a
+      // challenge the user genuinely solved.
+      if (captcha) setCaptchaNonce((n) => n + 1);
     } finally {
       setLoading(false);
     }
   };
+
+  // A configured captcha must be solved before the button does anything. The
+  // server refuses a tokenless signup regardless; this is so the user finds out
+  // before filling the form in, not after.
+  const awaitingCaptcha = Boolean(captcha) && !captchaToken;
 
   return (
     <div className="login-page">
@@ -115,9 +161,31 @@ function Signup({ onLogin }) {
             </span>
           </div>
 
-          <button type="submit" className="login-btn" disabled={loading} aria-busy={loading}>
+          {captcha && (
+            <CaptchaWidget
+              provider={captcha.provider}
+              siteKey={captcha.site_key}
+              onToken={setCaptchaToken}
+              resetSignal={captchaNonce}
+            />
+          )}
+
+          <button
+            type="submit"
+            className="login-btn"
+            disabled={loading || awaitingCaptcha}
+            aria-busy={loading}
+            aria-describedby={awaitingCaptcha ? "captcha-help" : undefined}
+          >
             {loading ? "Creating…" : "Create workspace"}
           </button>
+          {awaitingCaptcha && (
+            // A disabled button with no explanation is the reason people give
+            // up on a form. Screen readers get it via aria-describedby above.
+            <span id="captcha-help" className="login-hint">
+              Complete the challenge above to create your workspace
+            </span>
+          )}
         </form>
 
         <div className="login-footer">
