@@ -8,7 +8,19 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
+# `upgrade` before `install`, and it is not decoration: a base tag is a snapshot
+# of the day it was built, and Debian keeps shipping security fixes to it
+# afterwards. Without this the image inherits whatever was current when
+# python:3.12-slim was last pushed, which is how CVE-2026-53615 (util-linux,
+# nine packages, fixed in 2.41.5-0+deb13u1) turned CI red on 2026-08-17 with no
+# source change involved. The frontend image has done the Alpine equivalent
+# (`apk upgrade`) since it was written; this is the same reasoning, applied on
+# the side that was missing it.
+#
+# The Trivy scan in CI is what keeps this honest — it fails the build on HIGH
+# and CRITICAL, so a base image that drifts out of date cannot ship quietly.
 RUN apt-get update \
+    && apt-get upgrade -y \
     && apt-get install -y --no-install-recommends curl \
     && rm -rf /var/lib/apt/lists/*
 
