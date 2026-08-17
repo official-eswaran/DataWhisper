@@ -47,11 +47,23 @@ finished.
 | Migrations | Head is `b92c4d17ae03` (email verification, #21) |
 | Dependencies | Dependabot active; majors gated for pip/npm/docker |
 
-> **Dependency advisories expire on their own.** Two CI gates have already gone
-> red with no code change involved — sentry-sdk (PYSEC-2026-1917) and
-> react-router (GHSA-qwww-vcr4-c8h2). Both are handled, and Dependabot now
-> watches, but treat any "clean" claim above as a snapshot: run the verification
-> block below rather than believing it.
+> **Dependency advisories expire on their own.** Three CI gates have now gone
+> red with no code change involved — sentry-sdk (PYSEC-2026-1917), react-router
+> (GHSA-qwww-vcr4-c8h2) and, on 2026-08-17, **CVE-2026-53615 in the backend's
+> base image**. All three are handled, and Dependabot now watches the first two,
+> but treat any "clean" claim above as a snapshot: run the verification block
+> below rather than believing it.
+>
+> **The third one is a different kind, and worth its own line.** Dependabot
+> cannot see it: nothing in `requirements.txt` was involved. `python:3.12-slim`
+> is a snapshot of the day it was built, Debian keeps shipping fixes to it
+> afterwards, and the backend Dockerfile installed `curl` without ever running
+> `apt-get upgrade` — so the image inherited whatever was current when the tag
+> was last pushed. The frontend image has run `apk upgrade` since it was
+> written, with a comment explaining exactly this; **the reasoning simply never
+> crossed to the other Dockerfile.** It went red between #103's PR run (green)
+> and the merge run on `main` an hour later, which is the clearest illustration
+> available that a green check is a measurement with a timestamp on it.
 
 ### What shipped
 
