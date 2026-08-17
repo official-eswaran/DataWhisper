@@ -41,25 +41,24 @@ export default defineConfig({
         // assert that the render tests don't already cover.
         "src/index.jsx",
       ],
-      // A floor, not a target. Measured on 2026-08-16 with the signup captcha
-      // (#21) added: 92.84 statements / 93.65 branches / 74.33 functions /
-      // 92.84 lines.
+      // A floor, not a target. Measured on 2026-08-17 with `services/api.js`
+      // covered: 97.45 statements / 95.81 branches / 95.65 functions /
+      // 97.45 lines.
       //
-      // **`branches` went DOWN (94.36 → 93.65) while nothing lost cover** —
-      // read this before treating it as a regression. v8 reports branch data
-      // only for functions it actually entered, so branches inside never-run
-      // code are not in the denominator at all. `services/api.js` had 6
-      // counted branches (5 covered = 83.33%); adding one exported function
-      // that tests do execute — `getSignupConfig` — made v8 report the file's
-      // other blocks too, and it now shows 17 counted branches with 9 covered
-      // (52.94%). Eleven uncovered branches appeared that were always there.
-      // Statements, functions and lines all rose in the same run.
+      // **Read this before trusting `branches` as a ratchet.** v8 reports
+      // branch data only for functions it actually entered, so branches inside
+      // never-run code are not in the denominator at all. On 2026-08-16 this
+      // metric *fell* (94.36 → 93.65) while nothing lost cover: `api.js` had 6
+      // counted branches (5 covered = 83.33%), and adding one exported function
+      // that tests do execute made v8 report the file's other blocks too — 17
+      // counted, 9 covered. Eleven uncovered branches appeared that had been
+      // there all along. Covering the file took it to 100% and the global figure
+      // to 95.81, above where it started.
       //
-      // The lesson generalises past this PR: **this metric's denominator moves
-      // when execution reaches new code**, so a branch percentage is only
-      // comparable between runs over identical code. Covering `api.js` — the
-      // file that hid them, and already named below as the honest next target —
-      // is what takes this back above 94.
+      // The generalisable part: **this metric's denominator moves when
+      // execution reaches new code**, so a branch percentage is only comparable
+      // between runs over identical code. A fall is worth investigating before
+      // it is worth reverting.
       //
       // **Set just under measured, and verify the gate bites (#70).** These sit
       // ~0.4 under rather than the "few points" the original #27 gate used,
@@ -78,18 +77,25 @@ export default defineConfig({
       // uncovered code must come with tests or move the gate deliberately.
       //
       // **All thirteen components are covered as of 2026-08-16** — the twelve
-      // from #70 plus `CaptchaWidget` (#21), each at 100% on all four metrics.
-      // What is left below 100% is `App.jsx` (the boot/refresh path) and
-      // `services/api.js` (58.07%, mostly thin wrappers exercised through the
-      // components that call them) — neither is a component.
+      // from #70 plus `CaptchaWidget` (#21) — and `services/api.js` since
+      // 2026-08-17, each at 100% on all four metrics.
       //
-      // Statements and functions are what bite; branches is carried by the
-      // whole suite and, per the note above, is not a stable ratchet.
+      // `api.js` was written off as "thin wrappers exercised through the
+      // components that call them", which was true of about half of it. The
+      // other half is the session machinery: the token store, the single-flight
+      // refresh, the retry-once 401 interceptor and the SSE parser. Nothing had
+      // asserted any of it, and two of those are untestable from a component —
+      // that concurrent 401s share one refresh call, and that an SSE event split
+      // across two network chunks survives the boundary.
+      //
+      // **What is left is `App.jsx` at 87.3%** (the boot/refresh path), the last
+      // file below 100% that is neither a component nor a service, and the
+      // honest next target for anyone wanting the number higher.
       thresholds: {
-        statements: 92.4,
-        branches: 93.2,
-        functions: 73.9,
-        lines: 92.4,
+        statements: 97,
+        branches: 95.4,
+        functions: 95.2,
+        lines: 97,
       },
     },
   },

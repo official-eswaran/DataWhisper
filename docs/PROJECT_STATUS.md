@@ -1,6 +1,6 @@
 # Project status & how to resume
 
-**Last updated:** 2026-08-16
+**Last updated:** 2026-08-17
 **Branch of record:** `main`.
 
 > ⚠️ **`master` is not the branch of record and does not exist on the remote.**
@@ -41,7 +41,7 @@ finished.
 |------|-------|
 | Backend tests | **727 passing**, `ruff` clean, **91%** coverage, gate **85** (#28) |
 | NL2SQL accuracy | **98.2%** (3 repeats, cache off); 6 of 8 at 100%, no case failing every run |
-| Frontend tests | **314 passing**, **all 13 components covered**; gate **92.4/93.2/73.9/92.4** (#27, #70, #21) |
+| Frontend tests | **371 passing**, **all 13 components + `api.js` covered**; gate **97/95.4/95.2/97** (#27, #70, #21) |
 | Build/runtime | Vite build OK, Node 24 (LTS), dependency audit clean |
 | E2E | Runs in GitHub Actions ✅; passes on attempt 1 since PR #63 (#45 fixed) |
 | Migrations | Head is `b92c4d17ae03` (email verification, #21) |
@@ -64,6 +64,14 @@ finished.
 | #13 | #6 | Per-tenant quotas + usage metering (`/api/usage`) |
 | #14 | #7, #8 | Frontend CRA→Vite, code-splitting, a11y, admin console + onboarding UI |
 | — | #5 (part) | Stripe billing: hosted Checkout + Portal + webhooks ([BILLING.md](BILLING.md)) |
+
+### Shipped 2026-08-17
+
+| Issue | What |
+|-------|------|
+| — | **`services/api.js` covered — 58.07% → 100% on all four metrics.** 55 tests, suite 314 → 371; overall **97.45 / 95.81 / 95.65 / 97.45**, and `branches` is back above where it stood before 08-16. Gate **92.4/93.2/73.9/92.4 → 97/95.4/95.2/97**, verified to bite on all four. 27 of 27 mutants killed. |
+| — | **"Thin wrappers exercised through the components that call them" was half true, and the wrong half was load-bearing.** That description — this file's, repeated three times — covers about half the file. The other half is the session machinery: the token store, the single-flight refresh, the retry-once 401 interceptor, and the SSE parser. **None of it had a single assertion**, and two of its properties cannot be reached from a component test at all: that concurrent 401s share *one* refresh call (one per 401 rotates the refresh cookie repeatedly and logs the user out), and that an SSE event split across two network chunks survives the boundary (a lost `done` event hangs the UI on "thinking" with the answer already delivered). |
+| — | **Three mutants survived the first pass, and each named a property the tests only appeared to hold.** Worth reading, because all three are the same mistake: an assertion that passes for a reason other than the one intended. (1) Removing `tokens.clear()` from `redirectToLogin` changed nothing, because the refresh's own catch already cleared them — the case that needs it is a *successful* refresh whose replay is still rejected, and nothing exercised it. (2) Removing the `if (!res.ok) throw` from the refresh changed nothing, because the mocked error body was empty — the real property is that a non-OK response must not install an `access_token` carried in its own body. (3) Removing the `data: ` prefix check changed nothing, because the malformed lines tested happened to fail `JSON.parse` anyway — but `event: {"stage":"done"}` is a legal SSE line whose tail *does* parse, so a keep-alive could end the query early. All three now have tests that fail without the code. |
 
 ### Shipped 2026-08-16
 
@@ -167,7 +175,7 @@ python3 -m pip_audit -r requirements.txt --strict   # --strict is what CI runs
 # Frontend (from frontend/)
 npm ci
 npm run build                           # outputs to build/
-npm test                                # expect 314 passed; enforces coverage thresholds
+npm test                                # expect 371 passed; enforces coverage thresholds
 npm audit --omit=dev                    # see the allowlist note in ci.yml
 ```
 
@@ -393,12 +401,19 @@ None are blocking, but they're the honest loose ends:
   **`CaptchaWidget` (#21, 08-16) makes it thirteen**, on the same terms: 100%
   on all four metrics, 18 tests, suite 287 → 314.
 
-  **What is left below 100% is not a component.** `App.jsx` sits at 87.3% (the
-  boot/refresh path) and `services/api.js` at 58.07% — mostly thin wrappers
-  exercised through the components that call them. Neither was in #70's scope,
-  and `api.js` is the honest next target for anyone wanting the number
-  higher — and now the *only* way to move `branches` back above 94, since it is
-  the file hiding the eleven branches that appeared on 08-16.
+  **`services/api.js` was covered on 08-17** — 58.07% → **100%**, 55 tests,
+  suite 314 → 371. It had been dismissed here three times as "mostly thin
+  wrappers exercised through the components that call them"; that was true of
+  about half of it, and the other half was the session machinery — the token
+  store, the single-flight refresh, the retry-once 401 interceptor and the SSE
+  parser — with no assertion anywhere in the suite. See the 08-17 entry above
+  for the three mutants that survived the first pass; each one exposed a test
+  that passed for a reason other than the one intended.
+
+  **What is left below 100% is `App.jsx`, at 87.3%** — the boot/refresh path,
+  never in #70's scope, and now the last file in `src/` that is neither a
+  component nor a service. It is the honest next target for anyone wanting the
+  number higher.
 
   **A raised gate is not automatically a ratchet, and this one wasn't.** Raising
   the thresholds by the original "a few points under measured" rule left the
@@ -684,8 +699,9 @@ The difference is that when someone does, none of these will start with
 8. ~~Frontend coverage gate (#27)~~ — done 2026-08-06, and ~~**#70**~~ —
    **done 2026-08-13**. All twelve components covered, each to 100% on all four
    metrics; suite 94 → 270, gate 60/85/50/60 → **91/94/71/91**, ratcheted once
-   per PR and verified to bite each time. What remains uncovered is `App.jsx`'s
-   boot path and `services/api.js` — neither is a component.
+   per PR and verified to bite each time. ~~`CaptchaWidget`~~ (08-16) and
+   ~~`services/api.js`~~ (08-17) followed on the same terms — suite 371, gate
+   **97/95.4/95.2/97**. **`App.jsx`'s boot path is all that remains.**
 9. ~~PDF export truncation (#46)~~ — done 2026-08-03.
 10. ~~EOL-runtime watch (#47)~~ — done 2026-08-06.
 11. ~~Accuracy: #69 (dates)~~, ~~#73 (per-group)~~, ~~#74 (HAVING)~~,
