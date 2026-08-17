@@ -17,6 +17,8 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel, EmailStr, field_validator
 
+from app.core import captcha
+from app.core.captcha import CaptchaUnavailable
 from app.core.config import settings
 from app.core.database import (
     consume_email_verification_token,
@@ -110,6 +112,22 @@ class RegisterRequest(BaseModel):
     username: str
     email: EmailStr
     password: str
+    # Optional in the schema, mandatory in practice whenever a provider is
+    # configured (issue #21). Optional here so deployments without a captcha —
+    # the default, and every existing client — are unchanged; the route, not the
+    # model, decides whether its absence is fatal, because only the route knows
+    # whether a provider is wired.
+    captcha_token: str = ""
+
+    @field_validator("captcha_token")
+    @classmethod
+    def check_captcha_token(cls, v: str) -> str:
+        v = v.strip()
+        # Bounded before it is posted anywhere. Real tokens are well under this;
+        # the cap stops an unbounded body being forwarded to the provider.
+        if len(v) > 4000:
+            raise ValueError("Invalid captcha token")
+        return v
 
     @field_validator("org_name")
     @classmethod
@@ -148,6 +166,30 @@ def _issue_tokens(response: Response, username: str, role: str, org_id: int) -> 
     }
 
 
+@router.get("/signup-config")
+def signup_config():
+    """What the signup form needs to render. Public and unauthenticated.
+
+    The site key is public by definition — it is rendered into the page — so
+    serving it costs nothing. Serving it *from here* is what stops the SPA
+    needing a build-time `VITE_CAPTCHA_SITE_KEY`: a second copy of the same
+    setting, in a different file, baked into a bundle that has to be rebuilt to
+    change it, and free to disagree with the secret the server verifies against.
+    One source of truth instead.
+
+    The secret is never here, and the response deliberately carries no widget
+    script URL — see the note in `core/captcha.py`.
+    """
+    return {
+        "signups_open": settings.SIGNUPS_OPEN,
+        "captcha": (
+            {"provider": settings.CAPTCHA_PROVIDER, "site_key": captcha.site_key()}
+            if captcha.configured()
+            else None
+        ),
+    }
+
+
 @router.post("/register", status_code=201)
 @limiter.limit(settings.RATE_LIMIT_REGISTER)
 def register(request: Request, response: Response, req: RegisterRequest):
@@ -163,6 +205,9 @@ def register(request: Request, response: Response, req: RegisterRequest):
             "Public signup is closed on this deployment. Contact an administrator "
             "for access.",
         )
+
+    _require_captcha(req.captcha_token)
+
     try:
         created = create_organization_with_owner(
             org_name=req.org_name,
@@ -181,6 +226,40 @@ def register(request: Request, response: Response, req: RegisterRequest):
     # their first question (issue #21).
     tokens["email_verified"] = not settings.should_require_email_verification
     return tokens
+
+
+def _require_captcha(token: str) -> None:
+    """Refuse the signup unless the challenge was solved (issue #21).
+
+    Runs *before* anything is written, so a refusal leaves no half-created org —
+    the property `test_closed_signup_creates_no_org` already pins for the
+    `SIGNUPS_OPEN` gate.
+
+    No provider configured → `captcha.verify` passes and this is a no-op, which
+    is the default and the entire test suite.
+
+    ``remoteip`` is deliberately not sent. It is optional in both providers'
+    APIs, and the address this process can see is nginx's — every signup would
+    be labelled with one IP, which is worse for the provider's own scoring than
+    omitting the field. A deployment that resolves the real client address can
+    pass it through `captcha.verify` directly.
+    """
+    try:
+        solved = captcha.verify(token)
+    except CaptchaUnavailable:
+        # 503, not 403: nothing is known about this signup, and the user has
+        # done nothing wrong. Distinct from a rejected challenge because the
+        # actions differ — wait and retry, versus solve it again. Failing closed
+        # is the point; an abuse control that opens under load is not one.
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Could not verify the captcha right now. Please try again in a moment.",
+        )
+    if not solved:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Captcha verification failed. Please complete the challenge again.",
+        )
 
 
 def _send_verification(username: str, email: str) -> None:

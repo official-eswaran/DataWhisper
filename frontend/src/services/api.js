@@ -206,12 +206,23 @@ export const exportPdf = (sessionId) =>
   API.get(`/export/pdf/${sessionId}`, { responseType: "blob" });
 
 // ── Onboarding / signup ─────────────────────────────────────────────────────
-export const register = (orgName, username, email, password) =>
+// What the signup form needs before it can render: whether signup is open, and
+// whether a captcha provider is configured (issue #21). Unauthenticated — the
+// signup page has no session by definition. Read from the server rather than a
+// build-time VITE_ var so the site key cannot drift from the secret the server
+// verifies against, and enabling a captcha does not need the SPA rebuilt.
+export const getSignupConfig = () => API.get("/auth/signup-config");
+
+// captchaToken is always passed by the caller — "" on a deployment with no
+// provider. No default value: a default here is a branch nothing exercises,
+// and the one caller already knows the answer.
+export const register = (orgName, username, email, password, captchaToken) =>
   API.post("/auth/register", {
     org_name: orgName,
     username,
     email,
     password,
+    captcha_token: captchaToken,
   });
 
 // ── Admin console: org user management (owner/admin) ────────────────────────

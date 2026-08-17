@@ -146,6 +146,32 @@ class Settings(BaseSettings):
     def smtp_from(self) -> str:
         return self.SMTP_FROM or self.SMTP_USERNAME
 
+    # ── Signup captcha (issue #21) ──────────────────────────────────────────────
+    # Unset → no challenge and nothing verified, exactly like SMTP_HOST. Set a
+    # provider's key pair and /api/auth/register refuses to create an org
+    # without a solved challenge. This is what the per-IP register limit cannot
+    # do: it only slows one address, and a distributed script mints orgs — each
+    # with a free LLM budget — at whatever rate it has addresses.
+    #
+    # "hcaptcha" or "turnstile"; both speak the same siteverify contract. The
+    # provider is what selects the CSP origins the widget needs, so an unknown
+    # value disables the feature rather than half-enabling it.
+    CAPTCHA_PROVIDER: str = "hcaptcha"
+    # Public — it is rendered into the page and served by /api/auth/signup-config.
+    CAPTCHA_SITE_KEY: str = ""
+    # Secret — the thing that makes a verdict mean anything. Its presence is
+    # what switches the feature on: a site key alone would draw a widget whose
+    # answer nobody checks, which is worse than drawing none.
+    CAPTCHA_SECRET: str = ""
+    # Registration blocks on this call, so it bounds how long a signup hangs on
+    # an unreachable provider. Shorter than SMTP's because this one runs before
+    # anything is written and the user is waiting on it.
+    CAPTCHA_TIMEOUT_SECONDS: float = 5.0
+    # Override for a test double or an enterprise egress proxy. Must be https —
+    # the verifier refuses anything else rather than posting the secret in the
+    # clear. Empty → the provider's documented endpoint.
+    CAPTCHA_VERIFY_URL: str = ""
+
     # ── Shared state / scaling ──────────────────────────────────────────────────
     # When set (e.g. redis://redis:6379/0), the conversation store and rate
     # limiter use Redis, making WEB_CONCURRENCY>1 and multi-replica correct.
