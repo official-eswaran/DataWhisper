@@ -88,14 +88,20 @@ export default defineConfig({
       // that concurrent 401s share one refresh call, and that an SSE event split
       // across two network chunks survives the boundary.
       //
-      // **What is left is `App.jsx` at 87.3%** (the boot/refresh path), the last
-      // file below 100% that is neither a component nor a service, and the
-      // honest next target for anyone wanting the number higher.
+      // **`App.jsx` followed on 2026-08-17** — 87.3% → 100%, and with it every
+      // file in `src/` outside `components/Visualization` is at 100%.
+      //
+      // **What is left is `ResultView.jsx` at 88.7 / 89.71 / 86.95** — the
+      // lazy-loaded Recharts view, and now the only file materially below 100%
+      // anywhere in the app. It is the honest next target.
+      //
+      // Measured 2026-08-17 with App.jsx covered: 97.84 statements / 96.36
+      // branches / 97.39 functions / 97.84 lines.
       thresholds: {
-        statements: 97,
-        branches: 95.4,
-        functions: 95.2,
-        lines: 97,
+        statements: 97.4,
+        branches: 95.9,
+        functions: 97,
+        lines: 97.4,
       },
     },
   },

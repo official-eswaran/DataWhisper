@@ -41,7 +41,7 @@ finished.
 |------|-------|
 | Backend tests | **727 passing**, `ruff` clean, **91%** coverage, gate **85** (#28) |
 | NL2SQL accuracy | **98.2%** (3 repeats, cache off); 6 of 8 at 100%, no case failing every run |
-| Frontend tests | **371 passing**, **all 13 components + `api.js` covered**; gate **97/95.4/95.2/97** (#27, #70, #21) |
+| Frontend tests | **385 passing**; everything outside `ResultView.jsx` at 100%; gate **97.4/95.9/97/97.4** (#27, #70, #21) |
 | Build/runtime | Vite build OK, Node 24 (LTS), dependency audit clean |
 | E2E | Runs in GitHub Actions ✅; passes on attempt 1 since PR #63 (#45 fixed) |
 | Migrations | Head is `b92c4d17ae03` (email verification, #21) |
@@ -81,6 +81,9 @@ finished.
 
 | Issue | What |
 |-------|------|
+| — | **`App.jsx` covered — 87.3% → 100% on all four metrics.** 16 tests, suite 371 → 385; overall **97.84 / 96.36 / 97.39 / 97.84**. Gate **97/95.4/95.2/97 → 97.4/95.9/97/97.4**, verified to bite. 17 of 20 mutants killed. What had no cover was the part no component test can reach: the boot gate (#22) and the login/logout transitions either side of it. |
+| — | **`App.jsx`'s boot had no error handling, and the tests found it.** The effect chained `.then().finally()` with no `.catch` — and `.finally` does not handle a rejection, it re-throws. The only thing standing between a failed boot and an unhandled rejection was a `.catch` inside `services/api` that `App.jsx` cannot see and no test asserted. Latent rather than live, because that catch does exist today — but it is a coupling across a module boundary that nothing recorded, which is how it would have broken. Fixed in the same PR rather than filed, a deliberate deviation from the #77/#82 convention: the alternative was shipping a test file that leaves an unhandled error in every CI run. |
+| — | **A test written for that PR was vacuous, and deleting it is the finding.** It asserted that unmounting mid-boot produced no `console.error`, to cover the effect's `active` guard — and it passed with the guard deleted. **React 18 removed that warning**, so a state update on an unmounted component is a silent no-op with nothing left to observe. The guard stays as the standard idiom (it becomes load-bearing the moment that effect gains a dependency) and both files now carry a note so it is not written again. The three surviving mutants are all this flag: unobservable by construction rather than untested. **This is the mutation-testing rule catching a test written by someone who had just written the rule down.** |
 | — | **`services/api.js` covered — 58.07% → 100% on all four metrics.** 55 tests, suite 314 → 371; overall **97.45 / 95.81 / 95.65 / 97.45**, and `branches` is back above where it stood before 08-16. Gate **92.4/93.2/73.9/92.4 → 97/95.4/95.2/97**, verified to bite on all four. 27 of 27 mutants killed. |
 | — | **"Thin wrappers exercised through the components that call them" was half true, and the wrong half was load-bearing.** That description — this file's, repeated three times — covers about half the file. The other half is the session machinery: the token store, the single-flight refresh, the retry-once 401 interceptor, and the SSE parser. **None of it had a single assertion**, and two of its properties cannot be reached from a component test at all: that concurrent 401s share *one* refresh call (one per 401 rotates the refresh cookie repeatedly and logs the user out), and that an SSE event split across two network chunks survives the boundary (a lost `done` event hangs the UI on "thinking" with the answer already delivered). |
 | — | **Three mutants survived the first pass, and each named a property the tests only appeared to hold.** Worth reading, because all three are the same mistake: an assertion that passes for a reason other than the one intended. (1) Removing `tokens.clear()` from `redirectToLogin` changed nothing, because the refresh's own catch already cleared them — the case that needs it is a *successful* refresh whose replay is still rejected, and nothing exercised it. (2) Removing the `if (!res.ok) throw` from the refresh changed nothing, because the mocked error body was empty — the real property is that a non-OK response must not install an `access_token` carried in its own body. (3) Removing the `data: ` prefix check changed nothing, because the malformed lines tested happened to fail `JSON.parse` anyway — but `event: {"stage":"done"}` is a legal SSE line whose tail *does* parse, so a keep-alive could end the query early. All three now have tests that fail without the code. |
@@ -187,7 +190,7 @@ python3 -m pip_audit -r requirements.txt --strict   # --strict is what CI runs
 # Frontend (from frontend/)
 npm ci
 npm run build                           # outputs to build/
-npm test                                # expect 371 passed; enforces coverage thresholds
+npm test                                # expect 385 passed; enforces coverage thresholds
 npm audit --omit=dev                    # see the allowlist note in ci.yml
 ```
 
@@ -422,9 +425,16 @@ None are blocking, but they're the honest loose ends:
   for the three mutants that survived the first pass; each one exposed a test
   that passed for a reason other than the one intended.
 
-  **What is left below 100% is `App.jsx`, at 87.3%** — the boot/refresh path,
-  never in #70's scope, and now the last file in `src/` that is neither a
-  component nor a service. It is the honest next target for anyone wanting the
+  **`App.jsx` was covered the same day** — 87.3% → **100%**, 16 tests, suite
+  371 → 385. It was never in #70's scope, and the uncovered part was the boot
+  gate and the login/logout transitions around it: the session lifecycle, which
+  no component test can reach because no component owns it. See the 08-17
+  entries above — the tests found a missing `.catch` on the boot chain, and one
+  of the tests written for it turned out to assert nothing.
+
+  **What is left below 100% is `ResultView.jsx`, at 88.7 / 89.71 / 86.95** —
+  the lazy-loaded Recharts view, and now the only file materially below 100%
+  anywhere in `src/`. It is the honest next target for anyone wanting the
   number higher.
 
   **A raised gate is not automatically a ratchet, and this one wasn't.** Raising
@@ -711,9 +721,11 @@ The difference is that when someone does, none of these will start with
 8. ~~Frontend coverage gate (#27)~~ — done 2026-08-06, and ~~**#70**~~ —
    **done 2026-08-13**. All twelve components covered, each to 100% on all four
    metrics; suite 94 → 270, gate 60/85/50/60 → **91/94/71/91**, ratcheted once
-   per PR and verified to bite each time. ~~`CaptchaWidget`~~ (08-16) and
-   ~~`services/api.js`~~ (08-17) followed on the same terms — suite 371, gate
-   **97/95.4/95.2/97**. **`App.jsx`'s boot path is all that remains.**
+   per PR and verified to bite each time. ~~`CaptchaWidget`~~ (08-16),
+   ~~`services/api.js`~~ and ~~`App.jsx`~~ (both 08-17) followed on the same
+   terms — suite **385**, gate **97.4/95.9/97/97.4**. **`ResultView.jsx`
+   (88.7%) is all that remains**, and it is the only file materially below 100%
+   left in `src/`.
 9. ~~PDF export truncation (#46)~~ — done 2026-08-03.
 10. ~~EOL-runtime watch (#47)~~ — done 2026-08-06.
 11. ~~Accuracy: #69 (dates)~~, ~~#73 (per-group)~~, ~~#74 (HAVING)~~,
