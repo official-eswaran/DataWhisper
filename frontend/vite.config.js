@@ -88,14 +88,32 @@ export default defineConfig({
       // that concurrent 401s share one refresh call, and that an SSE event split
       // across two network chunks survives the boundary.
       //
-      // **What is left is `App.jsx` at 87.3%** (the boot/refresh path), the last
-      // file below 100% that is neither a component nor a service, and the
-      // honest next target for anyone wanting the number higher.
+      // **`App.jsx` followed on 2026-08-17**, and `ResultView.jsx` on 08-18.
+      // **Every file in `src/` is now at 100% statements and lines.**
+      //
+      // Measured 2026-08-18: 99.8 statements / 98.13 branches / 99.13 functions
+      // / 99.8 lines.
+      //
+      // **The gate will not reach 100 on branches or functions, and should not
+      // be set there.** What remains is unreachable rather than untested, and
+      // the list is short enough to name:
+      //
+      //   * `ResultView`'s `if (!ref.current) return` — the download button and
+      //     the chart container render under one condition, so React has set
+      //     the ref before the button exists to click.
+      //   * `ResultView`'s histogram tooltip `formatter` — recharts activates a
+      //     tooltip in jsdom but never fills its payload, because the active
+      //     index comes from layout measurements jsdom does not produce.
+      //   * a handful of recharts render props in the same file, for the same
+      //     reason.
+      //
+      // Chasing those means testing recharts, or deleting guards that are cheap
+      // and correct. Leave them, and keep the gate just under measured.
       thresholds: {
-        statements: 97,
-        branches: 95.4,
-        functions: 95.2,
-        lines: 97,
+        statements: 99.4,
+        branches: 97.7,
+        functions: 98.7,
+        lines: 99.4,
       },
     },
   },

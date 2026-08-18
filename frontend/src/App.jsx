@@ -15,10 +15,25 @@ function App() {
   const [booting, setBooting] = useState(true);
 
   useEffect(() => {
+    // `active` has no observable effect under React 18 — a state update on an
+    // unmounted component is a silent no-op, and the warning that used to make
+    // this visible was removed. It is kept as the standard idiom because it
+    // becomes load-bearing the moment this effect gains a dependency and can
+    // run twice. Don't write a test for it: one was, it asserted the absence of
+    // a `console.error` that React no longer emits, and it passed with the flag
+    // deleted. See the note in `App.test.jsx`.
     let active = true;
     bootstrapSession()
       .then((session) => {
         if (active) setAuth(session);
+      })
+      // `.finally` does not handle a rejection — it re-throws. Without this
+      // catch the only thing standing between a failed boot and an unhandled
+      // rejection is a `.catch` inside `services/api`, which this file cannot
+      // see and no test asserted. Treating a failed boot as "no session" is
+      // right regardless: the gate must lift or the app never renders at all.
+      .catch(() => {
+        if (active) setAuth(null);
       })
       .finally(() => {
         if (active) setBooting(false);

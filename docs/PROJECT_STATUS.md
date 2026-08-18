@@ -1,6 +1,6 @@
 # Project status & how to resume
 
-**Last updated:** 2026-08-17
+**Last updated:** 2026-08-18
 **Branch of record:** `main`.
 
 > ⚠️ **`master` is not the branch of record and does not exist on the remote.**
@@ -36,12 +36,30 @@ finished.
 > that cannot fail is worse than no check, because it is believed.** Before
 > trusting anything green in this repo, ask what it would take for it to go red,
 > and then do that.
+>
+> **2026-08-16 → 18 made the same point from the other side.** Frontend coverage
+> went from 92.8% to every file at 100% statements and lines, and the three
+> defects that turned up were all in code with a green suite over it:
+>
+> * `App.jsx` booted through `.then().finally()` with no `.catch` — and
+>   `.finally` re-throws. The only thing between a failed boot and an unhandled
+>   rejection was a `.catch` inside `services/api` that `App.jsx` cannot see.
+> * `ResultView` took the whole app to the `ErrorBoundary` fallback on a text
+>   column, because `chart_advisor` asks pandas about the whole column while the
+>   frontend reads `typeof` off the first row — one leading `NULL` splits them.
+> * CI went red on `main` with **no source change at all**: the backend image was
+>   never `apt-get upgrade`d, so it inherited whatever was current the day
+>   `python:3.12-slim` was last pushed.
+>
+> **None of the three was findable by reading the file it lived in.** Two were
+> couplings across a boundary that nothing recorded, and the third was not in the
+> source at all. Coverage did not find them either — *writing the tests* did.
 
 | Area | State |
 |------|-------|
 | Backend tests | **727 passing**, `ruff` clean, **91%** coverage, gate **85** (#28) |
 | NL2SQL accuracy | **98.2%** (3 repeats, cache off); 6 of 8 at 100%, no case failing every run |
-| Frontend tests | **371 passing**, **all 13 components + `api.js` covered**; gate **97/95.4/95.2/97** (#27, #70, #21) |
+| Frontend tests | **403 passing**; every file at 100% statements/lines; gate **99.4/97.7/98.7/99.4** (#27, #70, #21) |
 | Build/runtime | Vite build OK, Node 24 (LTS), dependency audit clean |
 | E2E | Runs in GitHub Actions ✅; passes on attempt 1 since PR #63 (#45 fixed) |
 | Migrations | Head is `b92c4d17ae03` (email verification, #21) |
@@ -77,10 +95,38 @@ finished.
 | #14 | #7, #8 | Frontend CRA→Vite, code-splitting, a11y, admin console + onboarding UI |
 | — | #5 (part) | Stripe billing: hosted Checkout + Portal + webhooks ([BILLING.md](BILLING.md)) |
 
+### Session 2026-08-16 → 18
+
+Six PRs, in this order: **#103** signup captcha (#21) · **#105** base-image CVE
+(fixing a `main` that was already red) · **#104** `services/api.js` · **#107**
+`App.jsx` · **#108** `ResultView.jsx` · this file. Frontend suite **287 → 403**,
+gate **92.4/93.2/73.9/92.4 → 99.4/97.7/98.7/99.4**, ratcheted once per PR and
+verified to bite each time. Detail in the three dated tables below.
+
+**What changed strategically:** #21 is now code-complete, which means **every
+part of every open issue that can be done without provisioning something is
+done.** This file has asserted that since 2026-08-13 and it was not true then —
+see the note under "If you pick this up next". It is true now. The next move on
+#18, #19, #25 and #31 belongs to whoever can create a Stripe account, an
+SMTP/captcha account, or a staging environment.
+
+### Shipped 2026-08-18
+
+| Issue | What |
+|-------|------|
+| — | **`ResultView.jsx` covered — 88.7% → 100% statements and lines.** 18 tests, suite 385 → 403; overall **99.8 / 98.13 / 99.13 / 99.8**. Gate **97.4/95.9/97/97.4 → 99.4/97.7/98.7/99.4**, verified to bite. 22 of 22 mutants killed. **Every file in `src/` is now at 100% statements and lines**, which closes the coverage arc that started with #27 on 08-06 and ran through #70. |
+| — | **The PNG export had never been executed by a test.** The old suite asserted the download *button* existed and never pressed it, so serialise → size a canvas → paint → hand over a file ran nowhere. jsdom implements none of canvas, blob URLs or image decoding, so each is replaced with a recorder and what is asserted is the sequence. Four properties came out of it that a render test cannot see: the background is filled **before** the chart is drawn (reversed, the export is a plain dark rectangle), the object URL is **revoked** (otherwise one leak per download, invisible forever), the canvas is enlarged by `devicePixelRatio` **and** the context scaled to match (otherwise soft on every modern laptop, or cropped to a quarter frame), and a missing `devicePixelRatio` falls back to 1 (otherwise a NaN-sized canvas exports a blank file). |
+| — | **A latent crash in the histogram binner, and the reason it was reachable at all.** `buildHistogramData` filtered `v != null`, so a text value survived, `Math.min` returned `NaN`, and `buckets[NaN].count++` threw — which `ErrorBoundary` turns into the whole app being replaced by its fallback. It is latent because `chart_advisor` only labels a result `histogram` when it sees a numeric column. **But the two ends do not agree on what "numeric" means**: the backend asks pandas about the whole column, while `ResultView` reads `typeof` off the *first row only*. One leading `NULL` is enough to make them disagree, and that gap is the crack. Fixed by filtering to finite numbers; the disagreement itself is still there and is worth remembering. |
+| — | **Four dead branches deleted rather than tested.** `getAvailableTypes` and `getSortedData` each re-checked `!data`, which the component guarantees ~100 lines above; `renderChart`'s switch had `case "single_value"` and `case "table"` that the JSX routes away before the function is called. `default` is the opposite — genuinely live, because the backend picks the type and the two deploy separately, so a shape this build has never heard of must still render *something*. It now has a test. **A second copy of a check that cannot fail reads like the case is possible, and it is not.** |
+| — | **A failing assertion can arrive as a nonsense error with no stack.** `expect(container.querySelector("svg")).toBeNull()` was simply wrong — the toolbar's react-icons are SVGs too — but the failure surfaced as `TypeError: Cannot read properties of undefined (reading 'name')` with no stack and no line, because Vitest's DOM serialiser crashed while formatting the element it was about to print. It reads exactly like a crash inside the component. **If a DOM assertion fails with an unrelated `TypeError` and no stack, suspect the assertion before the code.** |
+
 ### Shipped 2026-08-17
 
 | Issue | What |
 |-------|------|
+| — | **`App.jsx` covered — 87.3% → 100% on all four metrics.** 16 tests, suite 371 → 385; overall **97.84 / 96.36 / 97.39 / 97.84**. Gate **97/95.4/95.2/97 → 97.4/95.9/97/97.4**, verified to bite. 17 of 20 mutants killed. What had no cover was the part no component test can reach: the boot gate (#22) and the login/logout transitions either side of it. |
+| — | **`App.jsx`'s boot had no error handling, and the tests found it.** The effect chained `.then().finally()` with no `.catch` — and `.finally` does not handle a rejection, it re-throws. The only thing standing between a failed boot and an unhandled rejection was a `.catch` inside `services/api` that `App.jsx` cannot see and no test asserted. Latent rather than live, because that catch does exist today — but it is a coupling across a module boundary that nothing recorded, which is how it would have broken. Fixed in the same PR rather than filed, a deliberate deviation from the #77/#82 convention: the alternative was shipping a test file that leaves an unhandled error in every CI run. |
+| — | **A test written for that PR was vacuous, and deleting it is the finding.** It asserted that unmounting mid-boot produced no `console.error`, to cover the effect's `active` guard — and it passed with the guard deleted. **React 18 removed that warning**, so a state update on an unmounted component is a silent no-op with nothing left to observe. The guard stays as the standard idiom (it becomes load-bearing the moment that effect gains a dependency) and both files now carry a note so it is not written again. The three surviving mutants are all this flag: unobservable by construction rather than untested. **This is the mutation-testing rule catching a test written by someone who had just written the rule down.** |
 | — | **`services/api.js` covered — 58.07% → 100% on all four metrics.** 55 tests, suite 314 → 371; overall **97.45 / 95.81 / 95.65 / 97.45**, and `branches` is back above where it stood before 08-16. Gate **92.4/93.2/73.9/92.4 → 97/95.4/95.2/97**, verified to bite on all four. 27 of 27 mutants killed. |
 | — | **"Thin wrappers exercised through the components that call them" was half true, and the wrong half was load-bearing.** That description — this file's, repeated three times — covers about half the file. The other half is the session machinery: the token store, the single-flight refresh, the retry-once 401 interceptor, and the SSE parser. **None of it had a single assertion**, and two of its properties cannot be reached from a component test at all: that concurrent 401s share *one* refresh call (one per 401 rotates the refresh cookie repeatedly and logs the user out), and that an SSE event split across two network chunks survives the boundary (a lost `done` event hangs the UI on "thinking" with the answer already delivered). |
 | — | **Three mutants survived the first pass, and each named a property the tests only appeared to hold.** Worth reading, because all three are the same mistake: an assertion that passes for a reason other than the one intended. (1) Removing `tokens.clear()` from `redirectToLogin` changed nothing, because the refresh's own catch already cleared them — the case that needs it is a *successful* refresh whose replay is still rejected, and nothing exercised it. (2) Removing the `if (!res.ok) throw` from the refresh changed nothing, because the mocked error body was empty — the real property is that a non-OK response must not install an `access_token` carried in its own body. (3) Removing the `data: ` prefix check changed nothing, because the malformed lines tested happened to fail `JSON.parse` anyway — but `event: {"stage":"done"}` is a legal SSE line whose tail *does* parse, so a keep-alive could end the query early. All three now have tests that fail without the code. |
@@ -187,7 +233,7 @@ python3 -m pip_audit -r requirements.txt --strict   # --strict is what CI runs
 # Frontend (from frontend/)
 npm ci
 npm run build                           # outputs to build/
-npm test                                # expect 371 passed; enforces coverage thresholds
+npm test                                # expect 403 passed; enforces coverage thresholds
 npm audit --omit=dev                    # see the allowlist note in ci.yml
 ```
 
@@ -422,10 +468,23 @@ None are blocking, but they're the honest loose ends:
   for the three mutants that survived the first pass; each one exposed a test
   that passed for a reason other than the one intended.
 
-  **What is left below 100% is `App.jsx`, at 87.3%** — the boot/refresh path,
-  never in #70's scope, and now the last file in `src/` that is neither a
-  component nor a service. It is the honest next target for anyone wanting the
-  number higher.
+  **`App.jsx` was covered the same day** — 87.3% → **100%**, 16 tests, suite
+  371 → 385. It was never in #70's scope, and the uncovered part was the boot
+  gate and the login/logout transitions around it: the session lifecycle, which
+  no component test can reach because no component owns it. See the 08-17
+  entries above — the tests found a missing `.catch` on the boot chain, and one
+  of the tests written for it turned out to assert nothing.
+
+  **`ResultView.jsx` closed it out on 2026-08-18** — 88.7% → **100%**
+  statements and lines, 18 tests, suite 385 → 403. **Every file in `src/` is
+  now at 100% statements and lines**, which ends the arc that began with #27 on
+  08-06.
+
+  **What is left is not coverage.** The residual branches and functions are
+  unreachable rather than untested — a ref guard whose null case cannot occur
+  while the button that reaches it exists, and recharts render props that jsdom
+  never invokes because it produces no layout measurements. They are named in
+  `vite.config.js` so the next person does not spend an afternoon on them.
 
   **A raised gate is not automatically a ratchet, and this one wasn't.** Raising
   the thresholds by the original "a few points under measured" rule left the
@@ -711,9 +770,12 @@ The difference is that when someone does, none of these will start with
 8. ~~Frontend coverage gate (#27)~~ — done 2026-08-06, and ~~**#70**~~ —
    **done 2026-08-13**. All twelve components covered, each to 100% on all four
    metrics; suite 94 → 270, gate 60/85/50/60 → **91/94/71/91**, ratcheted once
-   per PR and verified to bite each time. ~~`CaptchaWidget`~~ (08-16) and
-   ~~`services/api.js`~~ (08-17) followed on the same terms — suite 371, gate
-   **97/95.4/95.2/97**. **`App.jsx`'s boot path is all that remains.**
+   per PR and verified to bite each time. ~~`CaptchaWidget`~~ (08-16),
+   ~~`services/api.js`~~ and ~~`App.jsx`~~ (08-17) and ~~`ResultView.jsx`~~
+   (08-18) followed on the same terms — suite **403**, gate
+   **99.4/97.7/98.7/99.4**. **Frontend coverage is done:** every file in `src/`
+   is at 100% statements and lines, and what remains below 100% on branches and
+   functions is unreachable rather than untested (named in `vite.config.js`).
 9. ~~PDF export truncation (#46)~~ — done 2026-08-03.
 10. ~~EOL-runtime watch (#47)~~ — done 2026-08-06.
 11. ~~Accuracy: #69 (dates)~~, ~~#73 (per-group)~~, ~~#74 (HAVING)~~,
@@ -760,5 +822,18 @@ The difference is that when someone does, none of these will start with
   tests that stubbed the function containing the bug. **A check that cannot fail
   is worse than no check, because it is believed.**
 - **Tests must not reach a live Ollama.** See the architecture note above.
+- **`gh pr merge --auto` does not wait in this repo.** There is no branch
+  protection requiring status checks, so `--auto` has nothing to gate on and
+  merges immediately. On 2026-08-18 that merged #108 with the backend and image
+  jobs still running — they passed, but the flag did not do what its name
+  implies. **Read `gh pr checks` yourself before merging**, and remember that
+  the answer has a timestamp on it: #103 was green when it merged and its merge
+  commit was red an hour later (see the advisories note at the top).
+- **A failing DOM assertion can arrive as an unrelated error with no stack.**
+  `expect(el).toBeNull()` on a DOM node that is *not* null crashed Vitest's
+  serialiser while it formatted the failure, and what surfaced was
+  `TypeError: Cannot read properties of undefined (reading 'name')` — no stack,
+  no line, reading exactly like a crash inside the component. Suspect the
+  assertion before the code.
 - One focused PR per concern, against **`main`**, `ruff` clean, and update this
   file in the same PR.
