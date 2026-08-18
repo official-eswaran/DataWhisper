@@ -36,6 +36,24 @@ finished.
 > that cannot fail is worse than no check, because it is believed.** Before
 > trusting anything green in this repo, ask what it would take for it to go red,
 > and then do that.
+>
+> **2026-08-16 → 18 made the same point from the other side.** Frontend coverage
+> went from 92.8% to every file at 100% statements and lines, and the three
+> defects that turned up were all in code with a green suite over it:
+>
+> * `App.jsx` booted through `.then().finally()` with no `.catch` — and
+>   `.finally` re-throws. The only thing between a failed boot and an unhandled
+>   rejection was a `.catch` inside `services/api` that `App.jsx` cannot see.
+> * `ResultView` took the whole app to the `ErrorBoundary` fallback on a text
+>   column, because `chart_advisor` asks pandas about the whole column while the
+>   frontend reads `typeof` off the first row — one leading `NULL` splits them.
+> * CI went red on `main` with **no source change at all**: the backend image was
+>   never `apt-get upgrade`d, so it inherited whatever was current the day
+>   `python:3.12-slim` was last pushed.
+>
+> **None of the three was findable by reading the file it lived in.** Two were
+> couplings across a boundary that nothing recorded, and the third was not in the
+> source at all. Coverage did not find them either — *writing the tests* did.
 
 | Area | State |
 |------|-------|
@@ -76,6 +94,21 @@ finished.
 | #13 | #6 | Per-tenant quotas + usage metering (`/api/usage`) |
 | #14 | #7, #8 | Frontend CRA→Vite, code-splitting, a11y, admin console + onboarding UI |
 | — | #5 (part) | Stripe billing: hosted Checkout + Portal + webhooks ([BILLING.md](BILLING.md)) |
+
+### Session 2026-08-16 → 18
+
+Six PRs, in this order: **#103** signup captcha (#21) · **#105** base-image CVE
+(fixing a `main` that was already red) · **#104** `services/api.js` · **#107**
+`App.jsx` · **#108** `ResultView.jsx` · this file. Frontend suite **287 → 403**,
+gate **92.4/93.2/73.9/92.4 → 99.4/97.7/98.7/99.4**, ratcheted once per PR and
+verified to bite each time. Detail in the three dated tables below.
+
+**What changed strategically:** #21 is now code-complete, which means **every
+part of every open issue that can be done without provisioning something is
+done.** This file has asserted that since 2026-08-13 and it was not true then —
+see the note under "If you pick this up next". It is true now. The next move on
+#18, #19, #25 and #31 belongs to whoever can create a Stripe account, an
+SMTP/captcha account, or a staging environment.
 
 ### Shipped 2026-08-18
 
@@ -789,5 +822,18 @@ The difference is that when someone does, none of these will start with
   tests that stubbed the function containing the bug. **A check that cannot fail
   is worse than no check, because it is believed.**
 - **Tests must not reach a live Ollama.** See the architecture note above.
+- **`gh pr merge --auto` does not wait in this repo.** There is no branch
+  protection requiring status checks, so `--auto` has nothing to gate on and
+  merges immediately. On 2026-08-18 that merged #108 with the backend and image
+  jobs still running — they passed, but the flag did not do what its name
+  implies. **Read `gh pr checks` yourself before merging**, and remember that
+  the answer has a timestamp on it: #103 was green when it merged and its merge
+  commit was red an hour later (see the advisories note at the top).
+- **A failing DOM assertion can arrive as an unrelated error with no stack.**
+  `expect(el).toBeNull()` on a DOM node that is *not* null crashed Vitest's
+  serialiser while it formatted the failure, and what surfaced was
+  `TypeError: Cannot read properties of undefined (reading 'name')` — no stack,
+  no line, reading exactly like a crash inside the component. Suspect the
+  assertion before the code.
 - One focused PR per concern, against **`main`**, `ruff` clean, and update this
   file in the same PR.
