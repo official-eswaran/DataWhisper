@@ -46,9 +46,10 @@ const CHART_TYPES = [
 ];
 
 // ── Determine which toggle options to show for a given result ─────────────────
+// Only ever called after the component's own `!data || data.length === 0`
+// guard, so it does not repeat it — a second copy of a check that cannot fail
+// reads like the case is possible here, and it is not.
 function getAvailableTypes(backendType, columns, data) {
-  if (!data || data.length === 0) return [];
-
   const numericCols = columns.filter(
     (c) => data.length > 0 && typeof data[0][c] === "number"
   );
@@ -76,7 +77,17 @@ function getAvailableTypes(backendType, columns, data) {
 
 // ── Histogram binning (frontend) ──────────────────────────────────────────────
 function buildHistogramData(data, col, bins = 15) {
-  const values = data.map((d) => d[col]).filter((v) => v != null);
+  // Finite numbers only, not merely non-null. A text value survives a `!= null`
+  // filter, makes `Math.min` return NaN, and then `Math.floor((v - min) / width)`
+  // is NaN too — so `buckets[NaN].count++` throws and ErrorBoundary replaces the
+  // whole app. Latent today, because the backend only labels a result
+  // `histogram` when it has a numeric column: but the two ends disagree about
+  // what "numeric" means. `chart_advisor` asks pandas about the whole column,
+  // while `numericCols` below reads `typeof` off the *first row only*, so a
+  // column those two judge differently is the crack this falls through.
+  const values = data
+    .map((d) => d[col])
+    .filter((v) => typeof v === "number" && Number.isFinite(v));
   if (values.length === 0) return [];
   const min = Math.min(...values);
   const max = Math.max(...values);
@@ -137,8 +148,10 @@ function ResultView({ type, data, columns }) {
   const chartRef                    = useRef(null);
 
   // ── Sort helper (table only) — must be before early return ─────────────────
+  // Declared before the early return because hooks must be, but only *called*
+  // from renderTable — which runs after it. Hence no `!data` branch here.
   const getSortedData = useCallback(() => {
-    if (!data || !sortCol) return data || [];
+    if (!sortCol) return data;
     return [...data].sort((a, b) => {
       const av = a[sortCol], bv = b[sortCol];
       if (av == null) return 1;
@@ -381,9 +394,12 @@ function ResultView({ type, data, columns }) {
   };
 
   // ── Main chart renderer ───────────────────────────────────────────────────
+  // `single_value` and `table` never reach here — the JSX below routes them
+  // before this is called — so they have no case of their own. `default` is
+  // live and load-bearing: the backend picks the type, and one it knows that
+  // this build does not must still render something. The table always can.
   const renderChart = () => {
     switch (viewType) {
-      case "single_value": return renderSingleValue();
       case "bar":          return renderBarChart();
       case "line":         return renderLineChart();
       case "area":         return renderAreaChart();
@@ -391,7 +407,6 @@ function ResultView({ type, data, columns }) {
       case "scatter":      return renderScatterChart();
       case "histogram":    return renderHistogram();
       case "multi_series": return renderMultiSeries();
-      case "table":        return renderTable();
       default:             return renderTable();
     }
   };

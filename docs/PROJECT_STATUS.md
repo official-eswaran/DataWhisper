@@ -1,6 +1,6 @@
 # Project status & how to resume
 
-**Last updated:** 2026-08-17
+**Last updated:** 2026-08-18
 **Branch of record:** `main`.
 
 > ⚠️ **`master` is not the branch of record and does not exist on the remote.**
@@ -41,7 +41,7 @@ finished.
 |------|-------|
 | Backend tests | **727 passing**, `ruff` clean, **91%** coverage, gate **85** (#28) |
 | NL2SQL accuracy | **98.2%** (3 repeats, cache off); 6 of 8 at 100%, no case failing every run |
-| Frontend tests | **385 passing**; everything outside `ResultView.jsx` at 100%; gate **97.4/95.9/97/97.4** (#27, #70, #21) |
+| Frontend tests | **403 passing**; every file at 100% statements/lines; gate **99.4/97.7/98.7/99.4** (#27, #70, #21) |
 | Build/runtime | Vite build OK, Node 24 (LTS), dependency audit clean |
 | E2E | Runs in GitHub Actions ✅; passes on attempt 1 since PR #63 (#45 fixed) |
 | Migrations | Head is `b92c4d17ae03` (email verification, #21) |
@@ -76,6 +76,16 @@ finished.
 | #13 | #6 | Per-tenant quotas + usage metering (`/api/usage`) |
 | #14 | #7, #8 | Frontend CRA→Vite, code-splitting, a11y, admin console + onboarding UI |
 | — | #5 (part) | Stripe billing: hosted Checkout + Portal + webhooks ([BILLING.md](BILLING.md)) |
+
+### Shipped 2026-08-18
+
+| Issue | What |
+|-------|------|
+| — | **`ResultView.jsx` covered — 88.7% → 100% statements and lines.** 18 tests, suite 385 → 403; overall **99.8 / 98.13 / 99.13 / 99.8**. Gate **97.4/95.9/97/97.4 → 99.4/97.7/98.7/99.4**, verified to bite. 22 of 22 mutants killed. **Every file in `src/` is now at 100% statements and lines**, which closes the coverage arc that started with #27 on 08-06 and ran through #70. |
+| — | **The PNG export had never been executed by a test.** The old suite asserted the download *button* existed and never pressed it, so serialise → size a canvas → paint → hand over a file ran nowhere. jsdom implements none of canvas, blob URLs or image decoding, so each is replaced with a recorder and what is asserted is the sequence. Four properties came out of it that a render test cannot see: the background is filled **before** the chart is drawn (reversed, the export is a plain dark rectangle), the object URL is **revoked** (otherwise one leak per download, invisible forever), the canvas is enlarged by `devicePixelRatio` **and** the context scaled to match (otherwise soft on every modern laptop, or cropped to a quarter frame), and a missing `devicePixelRatio` falls back to 1 (otherwise a NaN-sized canvas exports a blank file). |
+| — | **A latent crash in the histogram binner, and the reason it was reachable at all.** `buildHistogramData` filtered `v != null`, so a text value survived, `Math.min` returned `NaN`, and `buckets[NaN].count++` threw — which `ErrorBoundary` turns into the whole app being replaced by its fallback. It is latent because `chart_advisor` only labels a result `histogram` when it sees a numeric column. **But the two ends do not agree on what "numeric" means**: the backend asks pandas about the whole column, while `ResultView` reads `typeof` off the *first row only*. One leading `NULL` is enough to make them disagree, and that gap is the crack. Fixed by filtering to finite numbers; the disagreement itself is still there and is worth remembering. |
+| — | **Four dead branches deleted rather than tested.** `getAvailableTypes` and `getSortedData` each re-checked `!data`, which the component guarantees ~100 lines above; `renderChart`'s switch had `case "single_value"` and `case "table"` that the JSX routes away before the function is called. `default` is the opposite — genuinely live, because the backend picks the type and the two deploy separately, so a shape this build has never heard of must still render *something*. It now has a test. **A second copy of a check that cannot fail reads like the case is possible, and it is not.** |
+| — | **A failing assertion can arrive as a nonsense error with no stack.** `expect(container.querySelector("svg")).toBeNull()` was simply wrong — the toolbar's react-icons are SVGs too — but the failure surfaced as `TypeError: Cannot read properties of undefined (reading 'name')` with no stack and no line, because Vitest's DOM serialiser crashed while formatting the element it was about to print. It reads exactly like a crash inside the component. **If a DOM assertion fails with an unrelated `TypeError` and no stack, suspect the assertion before the code.** |
 
 ### Shipped 2026-08-17
 
@@ -190,7 +200,7 @@ python3 -m pip_audit -r requirements.txt --strict   # --strict is what CI runs
 # Frontend (from frontend/)
 npm ci
 npm run build                           # outputs to build/
-npm test                                # expect 385 passed; enforces coverage thresholds
+npm test                                # expect 403 passed; enforces coverage thresholds
 npm audit --omit=dev                    # see the allowlist note in ci.yml
 ```
 
@@ -432,10 +442,16 @@ None are blocking, but they're the honest loose ends:
   entries above — the tests found a missing `.catch` on the boot chain, and one
   of the tests written for it turned out to assert nothing.
 
-  **What is left below 100% is `ResultView.jsx`, at 88.7 / 89.71 / 86.95** —
-  the lazy-loaded Recharts view, and now the only file materially below 100%
-  anywhere in `src/`. It is the honest next target for anyone wanting the
-  number higher.
+  **`ResultView.jsx` closed it out on 2026-08-18** — 88.7% → **100%**
+  statements and lines, 18 tests, suite 385 → 403. **Every file in `src/` is
+  now at 100% statements and lines**, which ends the arc that began with #27 on
+  08-06.
+
+  **What is left is not coverage.** The residual branches and functions are
+  unreachable rather than untested — a ref guard whose null case cannot occur
+  while the button that reaches it exists, and recharts render props that jsdom
+  never invokes because it produces no layout measurements. They are named in
+  `vite.config.js` so the next person does not spend an afternoon on them.
 
   **A raised gate is not automatically a ratchet, and this one wasn't.** Raising
   the thresholds by the original "a few points under measured" rule left the
@@ -722,10 +738,11 @@ The difference is that when someone does, none of these will start with
    **done 2026-08-13**. All twelve components covered, each to 100% on all four
    metrics; suite 94 → 270, gate 60/85/50/60 → **91/94/71/91**, ratcheted once
    per PR and verified to bite each time. ~~`CaptchaWidget`~~ (08-16),
-   ~~`services/api.js`~~ and ~~`App.jsx`~~ (both 08-17) followed on the same
-   terms — suite **385**, gate **97.4/95.9/97/97.4**. **`ResultView.jsx`
-   (88.7%) is all that remains**, and it is the only file materially below 100%
-   left in `src/`.
+   ~~`services/api.js`~~ and ~~`App.jsx`~~ (08-17) and ~~`ResultView.jsx`~~
+   (08-18) followed on the same terms — suite **403**, gate
+   **99.4/97.7/98.7/99.4**. **Frontend coverage is done:** every file in `src/`
+   is at 100% statements and lines, and what remains below 100% on branches and
+   functions is unreachable rather than untested (named in `vite.config.js`).
 9. ~~PDF export truncation (#46)~~ — done 2026-08-03.
 10. ~~EOL-runtime watch (#47)~~ — done 2026-08-06.
 11. ~~Accuracy: #69 (dates)~~, ~~#73 (per-group)~~, ~~#74 (HAVING)~~,
