@@ -56,12 +56,17 @@ test("a scalar result shows its column name and value", () => {
   expect(screen.getByText("525")).toBeInTheDocument();
 });
 
-test("a large scalar is thousands-separated", () => {
+test("a large scalar is digit-grouped for the reader's locale", () => {
   render(
     <ResultView type="single_value" data={[{ total: 1234567 }]} columns={["total"]} />
   );
-  // Matches the backend summary formatting, which also separates thousands.
-  expect(screen.getByText("1,234,567")).toBeInTheDocument();
+  // Derived, not hardcoded. ResultView calls toLocaleString() with no explicit
+  // locale, so the grouping follows whoever is running the test: "1,234,567" on
+  // en-US, "12,34,567" on en-IN. Pinning the en-US string asserted the runner's
+  // locale rather than the component's behaviour, and failed everywhere else.
+  expect(screen.getByText((1234567).toLocaleString())).toBeInTheDocument();
+  // The grouping itself is the claim — the raw digits must not reach the DOM.
+  expect(screen.queryByText("1234567")).not.toBeInTheDocument();
 });
 
 test("a non-numeric scalar is shown as-is", () => {
