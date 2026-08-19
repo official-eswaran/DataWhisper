@@ -1,0 +1,43 @@
+{
+	"nodes":[
+		{"id":"e2878f53b9ac0171","type":"group","x":-40,"y":-40,"width":420,"height":700,"label":"External entities","color":"5"},
+		{"id":"425f0541412246ae","type":"text","x":20,"y":30,"width":320,"height":130,"text":"### Business user\nUploads a dataset.\nAsks questions in English.\nReads tables, charts, PDF.","color":"5"},
+		{"id":"abec891a55ccc348","type":"text","x":20,"y":200,"width":320,"height":130,"text":"### Admin / Owner\nManages users and plans.\nReads the audit log —\nown org only.","color":"5"},
+		{"id":"e0e8e714660371c0","type":"text","x":20,"y":370,"width":320,"height":120,"text":"### Stripe *(optional)*\nPlan and payment metadata.\n**Never dataset content.**","color":"1"},
+		{"id":"0560b5eea71d73e3","type":"text","x":20,"y":520,"width":320,"height":110,"text":"### SMTP *(optional)*\nAddress + verification token.\n**Never dataset content.**","color":"1"},
+		{"id":"5c4e1f39675c4848","type":"group","x":420,"y":-40,"width":560,"height":940,"label":"Processes","color":"4"},
+		{"id":"11eef4961c839221","type":"text","x":460,"y":30,"width":480,"height":140,"text":"## 1.0 Authenticate\nbcrypt (rounds=12) · account lockout\nAccess JWT in body,\nrotating refresh token as httpOnly cookie","color":"4"},
+		{"id":"281f0c657c7dc282","type":"text","x":460,"y":210,"width":480,"height":190,"text":"## 2.0 Ingest dataset\nextension allowlist → magic-byte check\n→ size limit → parse → row quota\n→ clean schema (`emp_nm` → `employee_name`)\n→ load into DuckDB → detect anomalies\n\n**Any failure deletes everything it created.**","color":"4"},
+		{"id":"10e4ebd481b35a4e","type":"text","x":460,"y":440,"width":480,"height":220,"text":"## 3.0 Answer question\nownership check (404, never 403)\n→ quota → rate limit\n→ classify intent (injection checked first)\n→ prompt = schema + 3 sample rows\n  + history + question\n→ validate → repair → execute → format","color":"4"},
+		{"id":"e4a06dae8f1fe5fa","type":"text","x":460,"y":700,"width":480,"height":150,"text":"## 4.0 Report & export\nPDF session report (ReportLab)\nAudit log reads (admin/owner)\nGDPR export and delete","color":"4"},
+		{"id":"59a9d18f3e3dbe4f","type":"group","x":1020,"y":-40,"width":480,"height":940,"label":"Data stores","color":"2"},
+		{"id":"c691a9ab4dea54d2","type":"text","x":1060,"y":30,"width":400,"height":150,"text":"### D1 — Metadata DB\norgs · users · sessions · audit\nrefresh tokens · usage\n\nLifetime: permanent until deleted\nScope: per org","color":"2"},
+		{"id":"2045209a64a96955","type":"text","x":1060,"y":210,"width":400,"height":130,"text":"### D2 — Upload staging\nThe raw uploaded file\n\nDeleted immediately on any\ningestion failure","color":"2"},
+		{"id":"b677b2129e46ed3e","type":"text","x":1060,"y":370,"width":400,"height":150,"text":"### D3 — DuckDB\nOne file per `session_id`\n\nLifetime: `SESSION_TTL_HOURS` (24)\nScope: per session","color":"2"},
+		{"id":"b9d9350fb830c0f7","type":"text","x":1060,"y":550,"width":400,"height":150,"text":"### D4 — Redis\nhistory · schema cache\nLLM cache · rate limits\n\nLifetime: `CONVERSATION_TTL_MINUTES`","color":"2"},
+		{"id":"88d810daa2275227","type":"text","x":1060,"y":730,"width":400,"height":130,"text":"### D5 — Object storage\nThe DuckDB file (S3, prod only)\n\nScope: per session","color":"2"},
+		{"id":"0a0d443d641039cb","type":"group","x":420,"y":940,"width":1080,"height":260,"label":"Trust boundary — generated SQL is hostile input","color":"1"},
+		{"id":"c62d33d035ec07df","type":"text","x":460,"y":1010,"width":480,"height":160,"text":"### Ollama — local model\nReceives: column names, types,\n**3 sample rows per table**,\nconversation history, the question.\n\nNever receives full results.\nNever leaves the host.","color":"3"},
+		{"id":"0aa49af09c45c5f7","type":"text","x":1020,"y":1010,"width":440,"height":160,"text":"### Safety gate\n`enable_external_access=false`\non the connection *(primary)*\n\nSingle statement · `SELECT`/`WITH`\ndenylist · `EXPLAIN` must bind","color":"1"}
+	],
+	"edges":[
+		{"id":"b301230421a4fd1f","fromNode":"425f0541412246ae","toNode":"11eef4961c839221","fromSide":"right","toSide":"left","toEnd":"arrow","label":"credentials"},
+		{"id":"786e5c1465d9260f","fromNode":"425f0541412246ae","toNode":"281f0c657c7dc282","fromSide":"right","toSide":"left","toEnd":"arrow","label":"file"},
+		{"id":"9816ea38dd8c38ff","fromNode":"425f0541412246ae","toNode":"10e4ebd481b35a4e","fromSide":"bottom","toSide":"left","toEnd":"arrow","label":"question"},
+		{"id":"7ec5ecb16aba9300","fromNode":"abec891a55ccc348","toNode":"e4a06dae8f1fe5fa","fromSide":"right","toSide":"left","toEnd":"arrow","label":"admin actions"},
+		{"id":"69c575d4d0af3dda","fromNode":"11eef4961c839221","toNode":"c691a9ab4dea54d2","fromSide":"right","toSide":"left","toEnd":"arrow","label":"users, tokens","fromEnd":"arrow"},
+		{"id":"dc40a5922de3f413","fromNode":"281f0c657c7dc282","toNode":"2045209a64a96955","fromSide":"right","toSide":"left","toEnd":"arrow","label":"raw file"},
+		{"id":"069d6fb80c764f00","fromNode":"281f0c657c7dc282","toNode":"b677b2129e46ed3e","fromSide":"right","toSide":"left","toEnd":"arrow","label":"cleaned DataFrame"},
+		{"id":"59af9b4fccd0c558","fromNode":"281f0c657c7dc282","toNode":"c691a9ab4dea54d2","fromSide":"top","toSide":"bottom","toEnd":"arrow","label":"session row"},
+		{"id":"1d83f7dda6635a5e","fromNode":"10e4ebd481b35a4e","toNode":"b677b2129e46ed3e","fromSide":"right","toSide":"bottom","toEnd":"arrow","label":"SELECT"},
+		{"id":"88fb9c2a728f13f3","fromNode":"10e4ebd481b35a4e","toNode":"b9d9350fb830c0f7","fromSide":"right","toSide":"left","toEnd":"arrow","label":"history, cache","fromEnd":"arrow"},
+		{"id":"a9c3bf4d1fddda85","fromNode":"10e4ebd481b35a4e","toNode":"c691a9ab4dea54d2","fromSide":"top","toSide":"left","toEnd":"arrow","label":"audit row: who asked what"},
+		{"id":"8f0cd25c0718a8cd","fromNode":"e4a06dae8f1fe5fa","toNode":"88d810daa2275227","fromSide":"right","toSide":"left","toEnd":"arrow","label":"session data"},
+		{"id":"3dc98a045c0b6fa5","fromNode":"b677b2129e46ed3e","toNode":"88d810daa2275227","fromSide":"bottom","toSide":"top","toEnd":"arrow","label":"persist / materialise","fromEnd":"arrow"},
+		{"id":"174ce4270c015406","fromNode":"10e4ebd481b35a4e","toNode":"c62d33d035ec07df","fromSide":"bottom","toSide":"top","toEnd":"arrow","label":"prompt"},
+		{"id":"c5802b8c5bd22edb","fromNode":"c62d33d035ec07df","toNode":"0aa49af09c45c5f7","fromSide":"right","toSide":"left","toEnd":"arrow","label":"generated SQL"},
+		{"id":"9a3c62fa81365e83","fromNode":"0aa49af09c45c5f7","toNode":"b677b2129e46ed3e","fromSide":"top","toSide":"right","toEnd":"arrow","label":"only if it passes"},
+		{"id":"e9e93a8ae767ed31","fromNode":"e4a06dae8f1fe5fa","toNode":"e0e8e714660371c0","fromSide":"left","toSide":"right","toEnd":"arrow","label":"plan metadata only","fromEnd":"arrow"},
+		{"id":"b38dd25e921edfdd","fromNode":"11eef4961c839221","toNode":"0560b5eea71d73e3","fromSide":"left","toSide":"right","toEnd":"arrow","label":"verification link only"}
+	]
+}

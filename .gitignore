@@ -1,6 +1,7 @@
 node_modules/
 build/
 venv/
+.venv/
 __pycache__/
 *.pyc
 .env
@@ -30,3 +31,7 @@ frontend/coverage/
 backups/
 
 audit.json
+
+# Obsidian UI state (churns on every pane move; the vault config itself is committed)
+.obsidian/workspace.json
+.obsidian/workspace-mobile.json
