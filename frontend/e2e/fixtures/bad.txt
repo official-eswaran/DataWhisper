@@ -1,0 +1,2 @@
+This is a plain text file, not a dataset.
+The uploader must refuse it: .txt is not in ALLOWED_EXTENSIONS.

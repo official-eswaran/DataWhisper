@@ -1,5 +1,5 @@
-# End-to-end smoke (issue #20). Runs the real browser → API → Ollama → DuckDB
-# flow via frontend/e2e.
+# End-to-end UI suite (issue #20). Runs the real browser → API → Ollama →
+# DuckDB flow via frontend/e2e.
 #
 # Deliberately NOT part of the per-PR ci.yml: it pulls a multi-GB model and does
 # CPU inference, which would add many minutes to every push. This runs on manual
@@ -18,9 +18,13 @@ on:
 
 jobs:
   e2e:
-    name: Full-flow smoke
+    name: Full UI suite
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # 30 was sized for the single full-flow smoke and its one inference call.
+    # The suite now makes seven, on a runner with no GPU, on top of the model
+    # pull — the budget has to grow with it or the job dies mid-run and reports
+    # a timeout instead of whatever actually broke.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
 
