@@ -67,7 +67,15 @@ function ChatWindow({ session }) {
             {
               id: nextId(),
               role: "assistant",
-              content: result.summary,
+              // Error results arrive here too, not through onError — the stream
+              // reports them as `stage: "done"` with an envelope that carries
+              // `message` instead of `summary`. Reading only `summary` left the
+              // bubble empty, so a failure that still produced SQL rendered as
+              // nothing but a "View SQL Query" toggle.
+              content:
+                result.summary ??
+                result.message ??
+                "Something went wrong. Try rephrasing your question.",
               type: result.type,
               data: result.data,
               columns: result.columns,
@@ -174,7 +182,7 @@ function ChatWindow({ session }) {
               <p className="msg-text">{msg.content}</p>
 
               {msg.sql && (
-                <details className="msg-sql">
+                <details className="msg-sql" open>
                   <summary>
                     <FiCode size={12} /> View SQL Query
                   </summary>
