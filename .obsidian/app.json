@@ -1,0 +1,13 @@
+{
+  "attachmentFolderPath": "docs/obsidian/attachments",
+  "newFileLocation": "folder",
+  "newFileFolderPath": "docs/obsidian",
+  "alwaysUpdateLinks": true,
+  "userIgnoreFilters": [
+    "node_modules/",
+    "backend/.venv/",
+    "frontend/build/",
+    "frontend/coverage/",
+    "backend/data/"
+  ]
+}
