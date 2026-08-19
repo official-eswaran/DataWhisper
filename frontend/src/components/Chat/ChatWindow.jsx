@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect, lazy, Suspense } from "react";
 import { askQuestionStream, exportPdf } from "../../services/api";
 import toast from "react-hot-toast";
 import { FiSend, FiDownload, FiCode, FiCpu, FiZap } from "react-icons/fi";
+import AnomalyList from "../Upload/AnomalyList";
 import "./ChatWindow.css";
 
 // Recharts is heavy; load the result/chart view only when a result exists so it
@@ -26,6 +27,11 @@ function ChatWindow({ session }) {
       role: "assistant",
       content: `Data loaded! Table "${session.table_name}" with ${session.rows} rows and ${session.columns?.length ?? 0} columns. Ask me anything about your data in plain English.`,
       type: "text",
+      // What ingestion noticed about the file, carried on the greeting because
+      // this is where a finished upload actually leaves the user. The upload
+      // screen renders the same panel, but a successful upload switches to this
+      // tab in the same commit, so nobody ever saw it there.
+      anomalies: session.anomalies,
     },
   ]);
   const [input, setInput]               = useState("");
@@ -180,6 +186,8 @@ function ChatWindow({ session }) {
             )}
             <div className="msg-body">
               <p className="msg-text">{msg.content}</p>
+
+              <AnomalyList anomalies={msg.anomalies} />
 
               {msg.sql && (
                 <details className="msg-sql" open>

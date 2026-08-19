@@ -2,13 +2,8 @@ import React, { useState, useCallback } from "react";
 import { useDropzone } from "react-dropzone";
 import { uploadFile } from "../../services/api";
 import toast from "react-hot-toast";
-import {
-  FiUploadCloud,
-  FiFile,
-  FiCheckCircle,
-  FiAlertTriangle,
-  FiInfo,
-} from "react-icons/fi";
+import { FiUploadCloud, FiFile, FiCheckCircle } from "react-icons/fi";
+import AnomalyList from "./AnomalyList";
 import "./FileUpload.css";
 
 function FileUpload({ onUploadSuccess }) {
@@ -51,14 +46,6 @@ function FileUpload({ onUploadSuccess }) {
     maxFiles: 1,
     disabled: uploading,
   });
-
-  const getSeverityColor = (severity) => {
-    switch (severity) {
-      case "high": return "var(--danger)";
-      case "medium": return "var(--warning)";
-      default: return "var(--text-muted)";
-    }
-  };
 
   return (
     <div className="upload-page">
@@ -118,32 +105,7 @@ function FileUpload({ onUploadSuccess }) {
             </div>
           </div>
 
-          {result.anomalies && result.anomalies.length > 0 && (
-            <div className="result-anomalies">
-              <h4>
-                <FiAlertTriangle size={14} /> Anomalies Detected
-              </h4>
-              {result.anomalies.map((a, i) => (
-                <div
-                  key={`${a.type}-${i}`}
-                  className="anomaly-item"
-                  style={{ borderLeftColor: getSeverityColor(a.severity) }}
-                >
-                  <FiInfo size={14} style={{ color: getSeverityColor(a.severity) }} />
-                  <div>
-                    <span className="anomaly-type">{a.type}</span>
-                    <p>{a.message}</p>
-                  </div>
-                  <span
-                    className="anomaly-severity"
-                    style={{ color: getSeverityColor(a.severity) }}
-                  >
-                    {a.severity}
-                  </span>
-                </div>
-              ))}
-            </div>
-          )}
+          <AnomalyList anomalies={result.anomalies} />
         </div>
       )}
     </div>

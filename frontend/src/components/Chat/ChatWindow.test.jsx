@@ -85,6 +85,64 @@ test("survives a session with no column list", () => {
   expect(screen.getByText(/0 columns/i)).toBeInTheDocument();
 });
 
+test("the opening message carries the ingestion anomalies", () => {
+  // These are computed during upload and returned with the session. They used
+  // to render only on the upload screen, which unmounts in the same commit as a
+  // successful upload — so nobody ever saw them. The greeting is where the
+  // upload actually leaves the user, so they belong here.
+  render(
+    <ChatWindow
+      session={{
+        ...SESSION,
+        anomalies: [
+          { type: "missing_data", message: "Column 'notes' has 31.0% missing values", severity: "medium" },
+          { type: "duplicates", message: "Found 1 duplicate rows in 'sales'", severity: "low" },
+        ],
+      }}
+    />,
+  );
+
+  expect(screen.getByText(/anomalies detected/i)).toBeInTheDocument();
+  expect(screen.getByText(/31.0% missing values/)).toBeInTheDocument();
+  expect(screen.getByText(/1 duplicate rows/)).toBeInTheDocument();
+});
+
+test("a session with nothing to report shows no anomalies panel", () => {
+  // Absent, not empty — an "Anomalies Detected" heading over nothing would read
+  // as a warning about a clean file.
+  const { container } = render(<ChatWindow session={{ ...SESSION, anomalies: [] }} />);
+  expect(screen.queryByText(/anomalies detected/i)).not.toBeInTheDocument();
+  expect(container.querySelector(".result-anomalies")).toBeNull();
+});
+
+test("a session with no anomalies key at all does not crash the greeting", () => {
+  // Every other test in this file passes a SESSION without one, but say so
+  // explicitly: the backend omits the key on some paths.
+  render(<ChatWindow session={SESSION} />);
+  expect(screen.getByText(/data loaded/i)).toBeInTheDocument();
+  expect(screen.queryByText(/anomalies detected/i)).not.toBeInTheDocument();
+});
+
+test("answers that follow the greeting carry no anomalies panel of their own", async () => {
+  // The panel hangs off one message, not off every assistant bubble.
+  const { container } = render(
+    <ChatWindow
+      session={{
+        ...SESSION,
+        anomalies: [{ type: "outlier", message: "Column 'revenue' has 1 outlier values", severity: "medium" }],
+      }}
+    />,
+  );
+  const stream = openStream();
+  await ask(container);
+  await act(async () => {
+    stream.onDone({ type: "text", summary: "Three rows." });
+    stream.close();
+  });
+
+  expect(container.querySelectorAll(".result-anomalies")).toHaveLength(1);
+});
+
 // ── Sending ──────────────────────────────────────────────────────────────────
 
 test("sending shows the question and calls the stream with the session", async () => {
