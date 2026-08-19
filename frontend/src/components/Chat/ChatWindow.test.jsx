@@ -255,6 +255,58 @@ test("a result renders its summary, its SQL and the chart view", async () => {
   expect(view).toHaveAttribute("data-rows", "1");
 });
 
+test("the SQL block is expanded, not folded away behind a click", async () => {
+  const stream = openStream();
+  const { container } = render(<ChatWindow session={SESSION} />);
+  await ask(container);
+
+  await act(async () => {
+    stream.onDone({
+      type: "bar",
+      summary: "3 results",
+      data: [{ region: "N", revenue: 100 }],
+      columns: ["region", "revenue"],
+      sql: "SELECT region, revenue FROM sales",
+      row_count: 1,
+    });
+  });
+
+  expect(container.querySelector(".msg-sql")).toHaveAttribute("open");
+});
+
+// The stream reports failures as `stage: "done"` with `message` where a success
+// carries `summary` — they reach onDone, not onError. Reading only `summary`
+// left content undefined, so a failure that had still produced SQL rendered as
+// an empty bubble with nothing but a "View SQL Query" toggle under it.
+test("an error result delivered as done still shows its message", async () => {
+  const stream = openStream();
+  const { container } = render(<ChatWindow session={SESSION} />);
+  await ask(container);
+
+  await act(async () => {
+    stream.onDone({
+      type: "error",
+      message: "The query could not be executed on your data. Please rephrase.",
+      sql: "SELECT nope FROM sales",
+    });
+  });
+
+  expect(screen.getByText(/could not be executed on your data/i)).toBeInTheDocument();
+  expect(container.querySelector(".msg-sql pre")).toHaveTextContent("SELECT nope FROM sales");
+});
+
+test("a done envelope with neither summary nor message still says something", async () => {
+  const stream = openStream();
+  const { container } = render(<ChatWindow session={SESSION} />);
+  await ask(container);
+
+  await act(async () => {
+    stream.onDone({ type: "error", sql: null });
+  });
+
+  expect(screen.getByText(/something went wrong/i)).toBeInTheDocument();
+});
+
 test("a chat answer renders no SQL block and no chart", async () => {
   const stream = openStream();
   const { container } = render(<ChatWindow session={SESSION} />);
