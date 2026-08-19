@@ -1,319 +1,39 @@
 {
-  "nodes": [
-    {
-      "id": "8efa880b86b21ad5",
-      "type": "group",
-      "x": -40,
-      "y": -40,
-      "width": 1400,
-      "height": 200,
-      "label": "Client tier",
-      "color": "5"
-    },
-    {
-      "id": "ef37b5c18133b283",
-      "type": "text",
-      "x": 400,
-      "y": 20,
-      "width": 480,
-      "height": 110,
-      "text": "### Browser / PWA\nReact 19 + Vite\n\nAccess token in memory only\nSSE consumed with `fetch` + reader",
-      "color": "5"
-    },
-    {
-      "id": "5d3484966e99251d",
-      "type": "group",
-      "x": -40,
-      "y": 200,
-      "width": 1400,
-      "height": 200,
-      "label": "Edge tier",
-      "color": "6"
-    },
-    {
-      "id": "6efd6158f1ebe816",
-      "type": "text",
-      "x": 400,
-      "y": 260,
-      "width": 480,
-      "height": 110,
-      "text": "### nginx\nServes the static build\nProxies `/api`\n\n**SSE passthrough \u2014 buffering off**",
-      "color": "6"
-    },
-    {
-      "id": "0d762fcbd0d8fa2c",
-      "type": "group",
-      "x": -40,
-      "y": 440,
-      "width": 1400,
-      "height": 460,
-      "label": "Application tier \u2014 FastAPI (Gunicorn + Uvicorn)",
-      "color": "4"
-    },
-    {
-      "id": "a11f31ccdd8bb9da",
-      "type": "text",
-      "x": 20,
-      "y": 510,
-      "width": 400,
-      "height": 150,
-      "text": "### Middleware chain\nCORS\nSecurity headers (CSP, nosniff, DENY)\nRequest id + Prometheus metrics\nStructured log line",
-      "color": "4"
-    },
-    {
-      "id": "1749fb3a8eaf7316",
-      "type": "text",
-      "x": 460,
-      "y": 510,
-      "width": 400,
-      "height": 150,
-      "text": "### Routers `/api/*`\nauth \u00b7 users \u00b7 upload \u00b7 query\nusage \u00b7 billing \u00b7 audit \u00b7 export \u00b7 gdpr\n\nOutside `/api`:\n`/health/live` `/health/ready` `/metrics`",
-      "color": "4"
-    },
-    {
-      "id": "63808e42820d74c4",
-      "type": "text",
-      "x": 900,
-      "y": 510,
-      "width": 420,
-      "height": 150,
-      "text": "### nl2sql package\nintent_classifier \u2192 prompt_builder\n\u2192 llm_client \u2192 sql_validator\n\u2192 7 deterministic repairs\n\u2192 result_formatter \u2192 chart_advisor",
-      "color": "4"
-    },
-    {
-      "id": "9c9500d67f484a27",
-      "type": "text",
-      "x": 460,
-      "y": 700,
-      "width": 860,
-      "height": 160,
-      "text": "### Safety gate (defense in depth)\n**Primary:** every query connection opens with `SET enable_external_access=false`\n**Secondary:** single statement \u00b7 `SELECT`/`WITH` only \u00b7 denylist for DDL/DML and file-reading table functions \u00b7 `EXPLAIN` must bind\n\nThe self-heal path re-runs both.",
-      "color": "1"
-    },
-    {
-      "id": "2ea00292e0557909",
-      "type": "group",
-      "x": -40,
-      "y": 940,
-      "width": 1400,
-      "height": 300,
-      "label": "State tier",
-      "color": "2"
-    },
-    {
-      "id": "f8e78924f6141a67",
-      "type": "text",
-      "x": 20,
-      "y": 1010,
-      "width": 310,
-      "height": 180,
-      "text": "### Metadata DB\nSQLite (dev) / Postgres (prod)\n\norgs \u00b7 users \u00b7 sessions\naudit log (hash-chained)\nrefresh tokens \u00b7 usage counters",
-      "color": "2"
-    },
-    {
-      "id": "aa8d4ec0dcfd8184",
-      "type": "text",
-      "x": 360,
-      "y": 1010,
-      "width": 310,
-      "height": 180,
-      "text": "### DuckDB\n**One file per `session_id`**\n\nThe uploaded dataset.\nIsolation is structural, not\nenforced by query text.",
-      "color": "2"
-    },
-    {
-      "id": "e74ad1fdef4f47bb",
-      "type": "text",
-      "x": 700,
-      "y": 1010,
-      "width": 310,
-      "height": 180,
-      "text": "### Redis\nConversation history\nCached schema\nLLM response cache\nRate-limit counters\n\nUnlocks `WEB_CONCURRENCY > 1`",
-      "color": "2"
-    },
-    {
-      "id": "e31a7a96a883a233",
-      "type": "text",
-      "x": 1040,
-      "y": 1010,
-      "width": 280,
-      "height": 180,
-      "text": "### Object storage\nS3, production only\n\nHolds the DuckDB file;\nmaterialised locally on demand.",
-      "color": "2"
-    },
-    {
-      "id": "1bcc8a4f3ddd63a3",
-      "type": "group",
-      "x": -40,
-      "y": 1280,
-      "width": 1400,
-      "height": 210,
-      "label": "Inference tier",
-      "color": "3"
-    },
-    {
-      "id": "ed0a3c13e23de054",
-      "type": "text",
-      "x": 400,
-      "y": 1340,
-      "width": 480,
-      "height": 120,
-      "text": "### Ollama\n`llama3.2:3b` at `OLLAMA_BASE_URL`\n\nBounded concurrency \u00b7 retry with backoff\ncircuit breaker \u00b7 prompt cache",
-      "color": "3"
-    },
-    {
-      "id": "7ee22520c3768d8c",
-      "type": "group",
-      "x": 1420,
-      "y": -40,
-      "width": 480,
-      "height": 1530,
-      "label": "The notes"
-    },
-    {
-      "id": "4804be220992f108",
-      "type": "file",
-      "x": 1450,
-      "y": 30,
-      "width": 420,
-      "height": 340,
-      "file": "docs/obsidian/01 Complete System Workflow.md"
-    },
-    {
-      "id": "062f9cbecab7301a",
-      "type": "file",
-      "x": 1450,
-      "y": 400,
-      "width": 420,
-      "height": 340,
-      "file": "docs/obsidian/02 Frontend Application Workflow.md"
-    },
-    {
-      "id": "0def0dc3d7fefd13",
-      "type": "file",
-      "x": 1450,
-      "y": 770,
-      "width": 420,
-      "height": 340,
-      "file": "docs/obsidian/03 System Architecture Flow.md"
-    },
-    {
-      "id": "0fb8db537aa6d624",
-      "type": "file",
-      "x": 1450,
-      "y": 1140,
-      "width": 420,
-      "height": 320,
-      "file": "docs/obsidian/04 Data Flow Diagram.md"
-    }
-  ],
-  "edges": [
-    {
-      "id": "6864004b654f9a76",
-      "fromNode": "ef37b5c18133b283",
-      "toNode": "6efd6158f1ebe816",
-      "fromSide": "bottom",
-      "toSide": "top",
-      "toEnd": "arrow",
-      "label": "HTTPS"
-    },
-    {
-      "id": "2490a57d4d1e1ace",
-      "fromNode": "6efd6158f1ebe816",
-      "toNode": "a11f31ccdd8bb9da",
-      "fromSide": "bottom",
-      "toSide": "top",
-      "toEnd": "arrow",
-      "label": "proxied request"
-    },
-    {
-      "id": "9e413d31eca6f4fb",
-      "fromNode": "a11f31ccdd8bb9da",
-      "toNode": "1749fb3a8eaf7316",
-      "fromSide": "bottom",
-      "toSide": "top",
-      "toEnd": "arrow"
-    },
-    {
-      "id": "cb457fefe2b74309",
-      "fromNode": "1749fb3a8eaf7316",
-      "toNode": "63808e42820d74c4",
-      "fromSide": "right",
-      "toSide": "left",
-      "toEnd": "arrow",
-      "label": "data_query"
-    },
-    {
-      "id": "c65aacfc9ad3142b",
-      "fromNode": "1749fb3a8eaf7316",
-      "toNode": "9c9500d67f484a27",
-      "fromSide": "bottom",
-      "toSide": "top",
-      "toEnd": "arrow",
-      "label": "generated SQL"
-    },
-    {
-      "id": "4c97d3625aad61fb",
-      "fromNode": "63808e42820d74c4",
-      "toNode": "9c9500d67f484a27",
-      "fromSide": "bottom",
-      "toSide": "right",
-      "toEnd": "arrow",
-      "label": "SQL"
-    },
-    {
-      "id": "d962ebae3d39fe68",
-      "fromNode": "9c9500d67f484a27",
-      "toNode": "aa8d4ec0dcfd8184",
-      "fromSide": "bottom",
-      "toSide": "top",
-      "toEnd": "arrow",
-      "label": "SELECT only"
-    },
-    {
-      "id": "36bf3df67f1ea7ac",
-      "fromNode": "1749fb3a8eaf7316",
-      "toNode": "f8e78924f6141a67",
-      "fromSide": "left",
-      "toSide": "top",
-      "toEnd": "arrow",
-      "label": "sessions, audit, quota"
-    },
-    {
-      "id": "4ef4093575459ad5",
-      "fromNode": "1749fb3a8eaf7316",
-      "toNode": "e74ad1fdef4f47bb",
-      "fromSide": "bottom",
-      "toSide": "top",
-      "toEnd": "arrow",
-      "label": "history, cache, limits"
-    },
-    {
-      "id": "53f6821cd600ed95",
-      "fromNode": "aa8d4ec0dcfd8184",
-      "toNode": "e31a7a96a883a233",
-      "fromSide": "right",
-      "toSide": "left",
-      "toEnd": "arrow",
-      "label": "persist / materialise",
-      "fromEnd": "arrow"
-    },
-    {
-      "id": "61ef4e9a0027bce5",
-      "fromNode": "63808e42820d74c4",
-      "toNode": "ed0a3c13e23de054",
-      "fromSide": "right",
-      "toSide": "right",
-      "toEnd": "arrow",
-      "label": "schema + history + question"
-    },
-    {
-      "id": "c42ccbd58732bec1",
-      "fromNode": "ed0a3c13e23de054",
-      "toNode": "63808e42820d74c4",
-      "fromSide": "left",
-      "toSide": "bottom",
-      "toEnd": "arrow",
-      "label": "SQL tokens"
-    }
-  ]
+	"nodes":[
+		{"id":"8efa880b86b21ad5","type":"group","x":-40,"y":-40,"width":1400,"height":200,"label":"Client tier","color":"5"},
+		{"id":"ef37b5c18133b283","type":"text","x":400,"y":20,"width":480,"height":110,"text":"### Browser / PWA\nReact 19 + Vite\n\nAccess token in memory only\nSSE consumed with `fetch` + reader","color":"5"},
+		{"id":"5d3484966e99251d","type":"group","x":-40,"y":200,"width":1400,"height":200,"label":"Edge tier","color":"6"},
+		{"id":"6efd6158f1ebe816","type":"text","x":400,"y":260,"width":480,"height":110,"text":"### nginx\nServes the static build\nProxies `/api`\n\n**SSE passthrough — buffering off**","color":"6"},
+		{"id":"0d762fcbd0d8fa2c","type":"group","x":-40,"y":440,"width":1400,"height":460,"label":"Application tier — FastAPI (Gunicorn + Uvicorn)","color":"4"},
+		{"id":"a11f31ccdd8bb9da","type":"text","x":20,"y":510,"width":400,"height":150,"text":"### Middleware chain\nCORS\nSecurity headers (CSP, nosniff, DENY)\nRequest id + Prometheus metrics\nStructured log line","color":"4"},
+		{"id":"1749fb3a8eaf7316","type":"text","x":460,"y":510,"width":400,"height":150,"text":"### Routers `/api/*`\nauth · users · upload · query\nusage · billing · audit · export · gdpr\n\nOutside `/api`:\n`/health/live` `/health/ready` `/metrics`","color":"4"},
+		{"id":"63808e42820d74c4","type":"text","x":900,"y":510,"width":420,"height":150,"text":"### nl2sql package\nintent_classifier → prompt_builder\n→ llm_client → sql_validator\n→ 7 deterministic repairs\n→ result_formatter → chart_advisor","color":"4"},
+		{"id":"9c9500d67f484a27","type":"text","x":460,"y":700,"width":860,"height":160,"text":"### Safety gate (defense in depth)\n**Primary:** every query connection opens with `SET enable_external_access=false`\n**Secondary:** single statement · `SELECT`/`WITH` only · denylist for DDL/DML and file-reading table functions · `EXPLAIN` must bind\n\nThe self-heal path re-runs both.","color":"1"},
+		{"id":"2ea00292e0557909","type":"group","x":-40,"y":940,"width":1400,"height":300,"label":"State tier","color":"2"},
+		{"id":"f8e78924f6141a67","type":"text","x":20,"y":1010,"width":310,"height":180,"text":"### Metadata DB\nSQLite (dev) / Postgres (prod)\n\norgs · users · sessions\naudit log (hash-chained)\nrefresh tokens · usage counters","color":"2"},
+		{"id":"aa8d4ec0dcfd8184","type":"text","x":360,"y":1010,"width":310,"height":180,"text":"### DuckDB\n**One file per `session_id`**\n\nThe uploaded dataset.\nIsolation is structural, not\nenforced by query text.","color":"2"},
+		{"id":"e74ad1fdef4f47bb","type":"text","x":700,"y":1010,"width":310,"height":180,"text":"### Redis\nConversation history\nCached schema\nLLM response cache\nRate-limit counters\n\nUnlocks `WEB_CONCURRENCY > 1`","color":"2"},
+		{"id":"e31a7a96a883a233","type":"text","x":1040,"y":1010,"width":280,"height":180,"text":"### Object storage\nS3, production only\n\nHolds the DuckDB file;\nmaterialised locally on demand.","color":"2"},
+		{"id":"1bcc8a4f3ddd63a3","type":"group","x":-40,"y":1280,"width":1400,"height":210,"label":"Inference tier","color":"3"},
+		{"id":"ed0a3c13e23de054","type":"text","x":400,"y":1340,"width":480,"height":120,"text":"### Ollama\n`llama3.2:3b` at `OLLAMA_BASE_URL`\n\nBounded concurrency · retry with backoff\ncircuit breaker · prompt cache","color":"3"},
+		{"id":"7ee22520c3768d8c","type":"group","x":1420,"y":-40,"width":480,"height":1530,"label":"The notes"},
+		{"id":"4804be220992f108","type":"file","x":1450,"y":30,"width":420,"height":340,"file":"docs/obsidian/01 Complete System Workflow.md"},
+		{"id":"062f9cbecab7301a","type":"file","x":1450,"y":400,"width":420,"height":340,"file":"docs/obsidian/02 Frontend Application Workflow.md"},
+		{"id":"0def0dc3d7fefd13","type":"file","x":1450,"y":770,"width":420,"height":340,"file":"docs/obsidian/03 System Architecture Flow.md"},
+		{"id":"0fb8db537aa6d624","type":"file","x":1450,"y":1140,"width":420,"height":320,"file":"docs/obsidian/04 Data Flow Diagram.md"}
+	],
+	"edges":[
+		{"id":"6864004b654f9a76","fromNode":"ef37b5c18133b283","toNode":"6efd6158f1ebe816","fromSide":"bottom","toSide":"top","toEnd":"arrow","label":"HTTPS"},
+		{"id":"2490a57d4d1e1ace","fromNode":"6efd6158f1ebe816","toNode":"a11f31ccdd8bb9da","fromSide":"bottom","toSide":"top","toEnd":"arrow","label":"proxied request"},
+		{"id":"9e413d31eca6f4fb","fromNode":"a11f31ccdd8bb9da","toNode":"1749fb3a8eaf7316","fromSide":"bottom","toSide":"top","toEnd":"arrow"},
+		{"id":"cb457fefe2b74309","fromNode":"1749fb3a8eaf7316","toNode":"63808e42820d74c4","fromSide":"right","toSide":"left","toEnd":"arrow","label":"data_query"},
+		{"id":"c65aacfc9ad3142b","fromNode":"1749fb3a8eaf7316","toNode":"9c9500d67f484a27","fromSide":"bottom","toSide":"top","toEnd":"arrow","label":"generated SQL"},
+		{"id":"4c97d3625aad61fb","fromNode":"63808e42820d74c4","toNode":"9c9500d67f484a27","fromSide":"bottom","toSide":"right","toEnd":"arrow","label":"SQL"},
+		{"id":"d962ebae3d39fe68","fromNode":"9c9500d67f484a27","toNode":"aa8d4ec0dcfd8184","fromSide":"bottom","toSide":"top","toEnd":"arrow","label":"SELECT only"},
+		{"id":"36bf3df67f1ea7ac","fromNode":"1749fb3a8eaf7316","toNode":"f8e78924f6141a67","fromSide":"left","toSide":"top","toEnd":"arrow","label":"sessions, audit, quota"},
+		{"id":"4ef4093575459ad5","fromNode":"1749fb3a8eaf7316","toNode":"e74ad1fdef4f47bb","fromSide":"bottom","toSide":"top","toEnd":"arrow","label":"history, cache, limits"},
+		{"id":"53f6821cd600ed95","fromNode":"aa8d4ec0dcfd8184","toNode":"e31a7a96a883a233","fromSide":"right","toSide":"left","toEnd":"arrow","label":"persist / materialise","fromEnd":"arrow"},
+		{"id":"61ef4e9a0027bce5","fromNode":"63808e42820d74c4","toNode":"ed0a3c13e23de054","fromSide":"right","toSide":"right","toEnd":"arrow","label":"schema + history + question"},
+		{"id":"c42ccbd58732bec1","fromNode":"ed0a3c13e23de054","toNode":"63808e42820d74c4","fromSide":"left","toSide":"bottom","toEnd":"arrow","label":"SQL tokens"}
+	]
 }
