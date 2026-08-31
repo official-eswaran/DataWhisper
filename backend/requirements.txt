@@ -1,10 +1,10 @@
 fastapi==0.141.1
 starlette==1.6.0
-uvicorn[standard]==0.52.3
+uvicorn[standard]==0.52.4
 gunicorn==23.0.0
 python-multipart==0.0.32
 pydantic-settings==2.15.0
-pydantic[email]==2.13.4
+pydantic[email]==2.13.5
 SQLAlchemy==2.0.52
 alembic==1.19.1
 psycopg[binary]==3.3.4
@@ -20,9 +20,9 @@ bcrypt==5.0.0
 slowapi==0.1.10
 prometheus-client==0.26.0
 redis==5.3.1
-boto3==1.43.71
-stripe==15.5.0
-sentry-sdk[fastapi]==2.68.0
+boto3==1.43.82
+stripe==15.6.0
+sentry-sdk[fastapi]==2.68.1
 opentelemetry-sdk==1.44.0
 opentelemetry-exporter-otlp-proto-http==1.44.0
 opentelemetry-instrumentation-fastapi==0.65b0
